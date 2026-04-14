@@ -1,179 +1,33 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform, HttpHeaders, HttpClient, HttpClientRequest, HttpClientResponse;
+import 'dart:io'
+    show Platform, HttpHeaders, HttpClient, HttpClientRequest, HttpClientResponse;
 import 'dart:math' as billMath;
 import 'dart:math';
 import 'dart:ui';
-import 'package:appsflyer_sdk/appsflyer_sdk.dart' as afCore;
+
+import 'package:appsflyer_sdk/appsflyer_sdk.dart' as appsflyer_core;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
-    show MethodChannel, SystemChrome, SystemUiOverlayStyle, MethodCall;
+    show
+    MethodChannel,
+    SystemChrome,
+    SystemUiOverlayStyle,
+    MethodCall,
+    VoidCallback;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:http/http.dart' as http;
-
 
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:rollbill/puScript.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:timezone/data/latest.dart' as tzData;
-import 'package:timezone/timezone.dart' as tzZone;
-
-// ============================================================================
-// Константы
-// ============================================================================
-
-const String billLoadedOnceKey = 'loaded_once';
-const String billStatEndpoint = 'https://api.saleclearens.store/stat';
-const String billCachedFcmKey = 'cached_fcm';
-
-// ============================================================================
-// Лёгкие сервисы
-// ============================================================================
-
-class BillBarrel {
-  static final BillBarrel billInstance = BillBarrel._internal();
-
-  BillBarrel._internal();
-
-  factory BillBarrel() => billInstance;
-
-  final Connectivity billConnectivity = Connectivity();
-
-  void billLogInfo(Object billMessage) => debugPrint('[I] $billMessage');
-  void billLogWarn(Object billMessage) => debugPrint('[W] $billMessage');
-  void billLogError(Object billMessage) => debugPrint('[E] $billMessage');
-}
-
-// ============================================================================
-// Сеть/данные
-// ============================================================================
-
-class BillWire {
-  final BillBarrel _billBarrel = BillBarrel();
-
-  Future<bool> isBillOnline() async {
-    final ConnectivityResult billConnectivityResult =
-    await _billBarrel.billConnectivity.checkConnectivity();
-    return billConnectivityResult != ConnectivityResult.none;
-  }
-
-  Future<void> postBillJson(
-      String billUrl,
-      Map<String, dynamic> billData,
-      ) async {
-    try {
-      await http.post(
-        Uri.parse(billUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(billData),
-      );
-    } catch (billError) {
-      _billBarrel.billLogError('postGlowJson error: $billError');
-    }
-  }
-}
-
-// ============================================================================
-// Досье устройства
-// ============================================================================
-
-class BillDeviceDeck {
-  String? billDeviceId;
-  String? billSessionId = 'roulette-one-off';
-  String? billPlatformName; // android/ios
-  String? billOsVersion;
-  String? billAppVersion;
-  String? billLang;
-  String? billTimezoneName;
-  bool billPushEnabled = true;
-
-  Future<void> initBillDeviceDeck() async {
-    final DeviceInfoPlugin billDeviceInfoPlugin = DeviceInfoPlugin();
-
-    if (Platform.isAndroid) {
-      final AndroidDeviceInfo billAndroidInfo =
-      await billDeviceInfoPlugin.androidInfo;
-      billDeviceId = billAndroidInfo.id;
-      billPlatformName = 'android';
-      billOsVersion = billAndroidInfo.version.release;
-    } else if (Platform.isIOS) {
-      final IosDeviceInfo billIosInfo = await billDeviceInfoPlugin.iosInfo;
-      billDeviceId = billIosInfo.identifierForVendor;
-      billPlatformName = 'ios';
-      billOsVersion = billIosInfo.systemVersion;
-    }
-
-    final PackageInfo billPackageInfo = await PackageInfo.fromPlatform();
-    billAppVersion = billPackageInfo.version;
-    billLang = Platform.localeName.split('_').first;
-    billTimezoneName = tzZone.local.name;
-    billSessionId = 'roulette-${DateTime.now().millisecondsSinceEpoch}';
-  }
-
-  Map<String, dynamic> asBillMap({String? billFcm}) => {
-    'fcm_token': billFcm ?? 'missing_token',
-    'device_id': billDeviceId ?? 'missing_id',
-    'app_name': 'rollbillman',
-    'instance_id': billSessionId ?? 'missing_session',
-    'platform': billPlatformName ?? 'missing_system',
-    'os_version': billOsVersion ?? 'missing_build',
-    'app_version': billAppVersion ?? 'missing_app',
-    'language': billLang ?? 'en',
-    'timezone': billTimezoneName ?? 'UTC',
-    'push_enabled': billPushEnabled,
-  };
-}
-
-// ============================================================================
-// AppsFlyer
-// ============================================================================
-
-class BillSpy {
-  afCore.AppsFlyerOptions? billOptions;
-  afCore.AppsflyerSdk? billSdk;
-
-  String billAfUid = '';
-  String billAfData = '';
-
-  void startBillSpy({VoidCallback? onBillUpdate}) {
-    final afCore.AppsFlyerOptions billConfig = afCore.AppsFlyerOptions(
-      afDevKey: 'qsBLmy7dAXDQhowM8V3ca4',
-      appId: '6756072063',
-      showDebug: true,
-      timeToWaitForATTUserAuthorization: 0,
-    );
-
-    billOptions = billConfig;
-    billSdk = afCore.AppsflyerSdk(billConfig);
-
-    billSdk?.initSdk(
-      registerConversionDataCallback: true,
-      registerOnAppOpenAttributionCallback: true,
-      registerOnDeepLinkingCallback: true,
-    );
-
-    billSdk?.startSDK(
-      onSuccess: () => BillBarrel().billLogInfo('NeonCinemaSpy started'),
-      onError: (billCode, billMsg) =>
-          BillBarrel().billLogError('NeonCinemaSpy error $billCode: $billMsg'),
-    );
-
-    billSdk?.onInstallConversionData((billValue) {
-      billAfData = billValue.toString();
-      onBillUpdate?.call();
-    });
-
-    billSdk?.getAppsFlyerUID().then((billValue) {
-      billAfUid = billValue.toString();
-      onBillUpdate?.call();
-    });
-  }
-}
+import 'package:timezone/data/latest.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz_zone;
 
 // ============================================================================
 // Новый loader: XO золотые буквы
@@ -346,77 +200,367 @@ class _BillLetter extends StatelessWidget {
 }
 
 // ============================================================================
-// FCM фоновые крики
+// Константы
 // ============================================================================
 
-@pragma('vm:entry-point')
-Future<void> billFcmBackgroundHandler(RemoteMessage billMessage) async {
-  BillBarrel().billLogInfo('bg-fcm: ${billMessage.messageId}');
-  BillBarrel().billLogInfo('bg-data: ${billMessage.data}');
+const String dressRetroLoadedOnceKey = 'loaded_once';
+const String dressRetroStatEndpoint = 'https://data.ncup.team/stat';
+const String dressRetroCachedFcmKey = 'cached_fcm';
+const String dressRetroCachedDeepKey = 'cached_deep_push_uri';
+
+const Set<String> kBankSchemes = {
+  'td',
+  'rbc',
+  'cibc',
+  'scotiabank',
+  'bmo',
+  'bmodigitalbanking',
+  'desjardins',
+  'tangerine',
+  'nationalbank',
+  'simplii',
+  'dominotoronto',
+};
+
+const Set<String> kBankDomains = {
+  'td.com',
+  'tdcanadatrust.com',
+  'easyweb.td.com',
+  'rbc.com',
+  'royalbank.com',
+  'online.royalbank.com',
+  'cibc.com',
+  'cibc.ca',
+  'online.cibc.com',
+  'scotiabank.com',
+  'scotiaonline.scotiabank.com',
+  'bmo.com',
+  'bmo.ca',
+  'bmodigitalbanking.com',
+  'desjardins.com',
+  'tangerine.ca',
+  'nbc.ca',
+  'nationalbank.ca',
+  'simplii.com',
+  'simplii.ca',
+  'dominotoronto.com',
+  'dominobank.com',
+};
+
+// ============================================================================
+// Лёгкие сервисы
+// ============================================================================
+
+class NcupLoggerService {
+  static final NcupLoggerService SharedInstance =
+  NcupLoggerService._InternalConstructor();
+
+  NcupLoggerService._InternalConstructor();
+
+  factory NcupLoggerService() => SharedInstance;
+
+  final Connectivity NcupConnectivity = Connectivity();
+
+  void NcupLogInfo(Object message) => print('[I] $message');
+  void NcupLogWarn(Object message) => print('[W] $message');
+  void NcupLogError(Object message) => print('[E] $message');
+}
+
+class NcupNetworkService {
+  final NcupLoggerService NcupLogger = NcupLoggerService();
+
+  Future<void> NcupPostJson(
+      String url,
+      Map<String, dynamic> data,
+      ) async {
+    try {
+      await http.post(
+        Uri.parse(url),
+        headers: <String, String>{'Content-Type': 'application/json'},
+        body: jsonEncode(data),
+      );
+    } catch (error) {
+      NcupLogger.NcupLogError('postJson error: $error');
+    }
+  }
 }
 
 // ============================================================================
-// FCM Bridge
+// Профиль устройства
 // ============================================================================
 
-class BillFcmBridge {
-  final BillBarrel _billBarrel = BillBarrel();
-  String? _billToken;
-  final List<void Function(String)> _billWaiters = <void Function(String)>[];
+class NcupDeviceProfile {
+  String? NcupDeviceId;
+  String? NcupSessionId = '';
+  String? NcupPlatformName;
+  String? NcupOsVersion;
+  String? NcupAppVersion;
+  String? NcupLanguageCode;
+  String? NcupTimezoneName;
+  bool NcupPushEnabled = false;
 
-  String? get billToken => _billToken;
+  bool NcupSafeAreaEnabled = false;
+  String? NcupSafeAreaColor;
 
-  BillFcmBridge() {
-    const MethodChannel('com.example.fcm/token')
-        .setMethodCallHandler((MethodCall billCall) async {
-      if (billCall.method == 'setToken') {
-        final String billTokenString = billCall.arguments as String;
-        if (billTokenString.isNotEmpty) {
-          _setBillToken(billTokenString);
+  String? NcupBaseUserAgent;
+
+  Map<String, dynamic>? NcupLastPushData;
+
+  // НОВОЕ: savels из сервера
+  Map<String, dynamic>? NcupSavels;
+
+  Future<void> NcupInitialize() async {
+    final DeviceInfoPlugin ncupDeviceInfoPlugin = DeviceInfoPlugin();
+
+    if (Platform.isAndroid) {
+      final AndroidDeviceInfo ncupAndroidInfo =
+      await ncupDeviceInfoPlugin.androidInfo;
+      NcupDeviceId = ncupAndroidInfo.id;
+      NcupPlatformName = 'android';
+      NcupOsVersion = ncupAndroidInfo.version.release;
+    } else if (Platform.isIOS) {
+      final IosDeviceInfo ncupIosInfo = await ncupDeviceInfoPlugin.iosInfo;
+      NcupDeviceId = ncupIosInfo.identifierForVendor;
+      NcupPlatformName = 'ios';
+      NcupOsVersion = ncupIosInfo.systemVersion;
+    }
+
+    final PackageInfo ncupPackageInfo = await PackageInfo.fromPlatform();
+    NcupAppVersion = ncupPackageInfo.version;
+    NcupLanguageCode = Platform.localeName.split('_').first;
+    NcupTimezoneName = tz_zone.local.name;
+    NcupSessionId = 'test-${DateTime.now().millisecondsSinceEpoch}';
+  }
+
+  Map<String, dynamic> NcupToMap({String? fcmToken}) => <String, dynamic>{
+    'fcm_token': fcmToken ?? 'missing_token',
+    'device_id': NcupDeviceId ?? 'missing_id',
+    'app_name': 'rollbillman',
+    'instance_id': NcupSessionId ?? 'missing_session',
+    'platform': NcupPlatformName ?? 'missing_system',
+    'os_version': NcupOsVersion ?? 'missing_build',
+    'app_version': NcupAppVersion ?? 'missing_app',
+    'language': NcupLanguageCode ?? 'en',
+    'timezone': NcupTimezoneName ?? 'UTC',
+    'push_enabled': NcupPushEnabled,
+    'safe_area_native': NcupSafeAreaEnabled,
+    'useragent': NcupBaseUserAgent ?? 'unknown_useragent',
+    // НОВОЕ: пишем savels прямо в app_data
+    'savels': NcupSavels ?? <String, dynamic>{},
+    'fpscashier': 'true',
+  };
+}
+
+// ============================================================================
+// AppsFlyer Spy
+// ============================================================================
+
+class NcupAnalyticsSpyService {
+  appsflyer_core.AppsFlyerOptions? NcupAppsFlyerOptions;
+  appsflyer_core.AppsflyerSdk? NcupAppsFlyerSdk;
+
+  String NcupAppsFlyerUid = '';
+  String NcupAppsFlyerData = '';
+
+  Map<String, dynamic>? NcupAppsFlyerOneLinkData;
+
+  void NcupStartTracking({VoidCallback? onUpdate}) {
+    final appsflyer_core.AppsFlyerOptions ncupConfig =
+    appsflyer_core.AppsFlyerOptions(
+      afDevKey: 'qsBLmy7dAXDQhowM8V3ca4',
+      appId: '6756670415',
+      showDebug: true,
+      timeToWaitForATTUserAuthorization: 0,
+    );
+
+    NcupAppsFlyerOptions = ncupConfig;
+    NcupAppsFlyerSdk = appsflyer_core.AppsflyerSdk(ncupConfig);
+
+    NcupAppsFlyerSdk?.initSdk(
+      registerConversionDataCallback: true,
+      registerOnAppOpenAttributionCallback: true,
+      registerOnDeepLinkingCallback: true,
+    );
+
+    NcupAppsFlyerSdk?.startSDK(
+      onSuccess: () =>
+          NcupLoggerService().NcupLogInfo('RetroCarAnalyticsSpy started'),
+      onError: (int code, String msg) =>
+          NcupLoggerService().NcupLogError('RetroCarAnalyticsSpy error $code: $msg'),
+    );
+
+    NcupAppsFlyerSdk?.onInstallConversionData((dynamic value) {
+      NcupAppsFlyerData = value.toString();
+      onUpdate?.call();
+    });
+
+    NcupAppsFlyerSdk?.getAppsFlyerUID().then((dynamic value) {
+      NcupAppsFlyerUid = value.toString();
+      onUpdate?.call();
+    });
+  }
+
+  void NcupSetOneLinkData(Map<String, dynamic> data) {
+    NcupAppsFlyerOneLinkData = data;
+    NcupLoggerService()
+        .NcupLogInfo('NcupAnalyticsSpyService: OneLink data updated: $data');
+  }
+}
+
+// ============================================================================
+// FCM фон
+// ============================================================================
+
+@pragma('vm:entry-point')
+Future<void> NcupFcmBackgroundHandler(RemoteMessage message) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+
+  NcupLoggerService().NcupLogInfo('bg-fcm: ${message.messageId}');
+  NcupLoggerService().NcupLogInfo('bg-data: ${message.data}');
+
+  final dynamic ncupLink = message.data['uri'];
+  if (ncupLink != null) {
+    try {
+      final SharedPreferences ncupPrefs = await SharedPreferences.getInstance();
+      await ncupPrefs.setString(
+        dressRetroCachedDeepKey,
+        ncupLink.toString(),
+      );
+    } catch (e) {
+      NcupLoggerService().NcupLogError('bg-fcm save deep failed: $e');
+    }
+  }
+}
+
+// ============================================================================
+// FCM Bridge — токен
+// ============================================================================
+
+class NcupFcmBridge {
+  final NcupLoggerService NcupLogger = NcupLoggerService();
+
+  static const MethodChannel _tokenChannel =
+  MethodChannel('com.example.fcm/token');
+
+  String? NcupToken;
+  final List<void Function(String)> NcupTokenWaiters =
+  <void Function(String)>[];
+
+  String? get NcupFcmToken => NcupToken;
+
+  Timer? _requestTimer;
+  int _requestAttempts = 0;
+  final int _maxAttempts = 10;
+
+  NcupFcmBridge() {
+    _tokenChannel.setMethodCallHandler((MethodCall NcupCall) async {
+      if (NcupCall.method == 'setToken') {
+        final String NcupTokenString = NcupCall.arguments as String;
+        NcupLogger.NcupLogInfo(
+            'NcupFcmBridge: got token from native channel = $NcupTokenString');
+        if (NcupTokenString.isNotEmpty) {
+          NcupSetToken(NcupTokenString);
         }
       }
     });
 
-    _restoreBillToken();
+    NcupRestoreToken();
+    _requestNativeToken();
+    _startRequestTimer();
   }
 
-  Future<void> _restoreBillToken() async {
+  Future<void> _requestNativeToken() async {
     try {
-      final SharedPreferences billPrefs =
-      await SharedPreferences.getInstance();
-      final String? billCachedToken = billPrefs.getString(billCachedFcmKey);
-      if (billCachedToken != null && billCachedToken.isNotEmpty) {
-        _setBillToken(billCachedToken, notify: false);
+      NcupLogger.NcupLogInfo('NcupFcmBridge: request native getToken()');
+      final String? token =
+      await _tokenChannel.invokeMethod<String>('getToken');
+      if (token != null && token.isNotEmpty) {
+        NcupLogger.NcupLogInfo(
+            'NcupFcmBridge: native getToken() returns $token');
+        NcupSetToken(token);
+      } else {
+        NcupLogger.NcupLogWarn(
+            'NcupFcmBridge: native getToken() returned empty');
       }
-    } catch (_) {}
-  }
-
-  Future<void> _persistBillToken(String billNewToken) async {
-    try {
-      final SharedPreferences billPrefs =
-      await SharedPreferences.getInstance();
-      await billPrefs.setString(billCachedFcmKey, billNewToken);
-    } catch (_) {}
-  }
-
-  void _setBillToken(String billNewToken, {bool notify = true}) {
-    _billToken = billNewToken;
-    _persistBillToken(billNewToken);
-    if (notify) {
-      for (final void Function(String) billCallback
-      in List<void Function(String)>.from(_billWaiters)) {
-        try {
-          billCallback(billNewToken);
-        } catch (billError) {
-          _billBarrel.billLogWarn('fcm waiter error: $billError');
-        }
-      }
-      _billWaiters.clear();
+    } catch (e) {
+      NcupLogger.NcupLogWarn('NcupFcmBridge: getToken invoke error: $e');
     }
   }
 
-  Future<void> waitBillToken(
-      Function(String billToken) onBillToken) async {
+  void _startRequestTimer() {
+    _requestTimer?.cancel();
+    _requestAttempts = 0;
+
+    _requestTimer = Timer.periodic(const Duration(seconds: 5), (Timer t) async {
+      if ((NcupToken ?? '').isNotEmpty) {
+        NcupLogger.NcupLogInfo(
+            'NcupFcmBridge: token already set, stop request timer');
+        t.cancel();
+        return;
+      }
+
+      if (_requestAttempts >= _maxAttempts) {
+        NcupLogger.NcupLogWarn(
+            'NcupFcmBridge: max getToken attempts reached, stop timer');
+        t.cancel();
+        return;
+      }
+
+      _requestAttempts++;
+      NcupLogger.NcupLogInfo(
+          'NcupFcmBridge: retry getToken() attempt #$_requestAttempts');
+      await _requestNativeToken();
+    });
+  }
+
+  Future<void> NcupRestoreToken() async {
+    try {
+      final SharedPreferences ncupPrefs = await SharedPreferences.getInstance();
+      final String? ncupCachedToken =
+      ncupPrefs.getString(dressRetroCachedFcmKey);
+      if (ncupCachedToken != null && ncupCachedToken.isNotEmpty) {
+        NcupLogger.NcupLogInfo(
+            'NcupFcmBridge: restored cached token = $ncupCachedToken');
+        NcupSetToken(ncupCachedToken, notify: false);
+      }
+    } catch (e) {
+      NcupLogger.NcupLogError('NcupRestoreToken error: $e');
+    }
+  }
+
+  Future<void> NcupPersistToken(String newToken) async {
+    try {
+      final SharedPreferences ncupPrefs = await SharedPreferences.getInstance();
+      await ncupPrefs.setString(dressRetroCachedFcmKey, newToken);
+    } catch (e) {
+      NcupLogger.NcupLogError('NcupPersistToken error: $e');
+    }
+  }
+
+  void NcupSetToken(
+      String newToken, {
+        bool notify = true,
+      }) {
+    NcupToken = newToken;
+    NcupPersistToken(newToken);
+
+    if (notify) {
+      for (final void Function(String) ncupCallback
+      in List<void Function(String)>.from(NcupTokenWaiters)) {
+        try {
+          ncupCallback(newToken);
+        } catch (error) {
+          NcupLogger.NcupLogWarn('fcm waiter error: $error');
+        }
+      }
+      NcupTokenWaiters.clear();
+    }
+  }
+
+  Future<void> NcupWaitForToken(
+      Function(String token) ncupOnToken,
+      ) async {
     try {
       await FirebaseMessaging.instance.requestPermission(
         alert: true,
@@ -424,15 +568,19 @@ class BillFcmBridge {
         sound: true,
       );
 
-      if ((_billToken ?? '').isNotEmpty) {
-        onBillToken(_billToken!);
+      if ((NcupToken ?? '').isNotEmpty) {
+        ncupOnToken(NcupToken!);
         return;
       }
 
-      _billWaiters.add(onBillToken);
-    } catch (billError) {
-      _billBarrel.billLogError('waitGlowToken error: $billError');
+      NcupTokenWaiters.add(ncupOnToken);
+    } catch (error) {
+      NcupLogger.NcupLogError('NcupWaitForToken error: $error');
     }
+  }
+
+  void dispose() {
+    _requestTimer?.cancel();
   }
 }
 
@@ -440,17 +588,17 @@ class BillFcmBridge {
 // Splash / Hall
 // ============================================================================
 
-class BillHall extends StatefulWidget {
-  const BillHall({Key? key}) : super(key: key);
+class NcupHall extends StatefulWidget {
+  const NcupHall({Key? key}) : super(key: key);
 
   @override
-  State<BillHall> createState() => _BillHallState();
+  State<NcupHall> createState() => _NcupHallState();
 }
 
-class _BillHallState extends State<BillHall> {
-  final BillFcmBridge billFcmBridge = BillFcmBridge();
-  bool billNavigatedOnce = false;
-  Timer? billFallbackTimer;
+class _NcupHallState extends State<NcupHall> {
+  final NcupFcmBridge NcupFcmBridgeInstance = NcupFcmBridge();
+  bool NcupNavigatedOnce = false;
+  Timer? NcupFallbackTimer;
 
   @override
   void initState() {
@@ -462,42 +610,40 @@ class _BillHallState extends State<BillHall> {
       statusBarBrightness: Brightness.dark,
     ));
 
-    billFcmBridge.waitBillToken((String billTokenValue) {
-      _goBillHarbor(billTokenValue);
+    NcupFcmBridgeInstance.NcupWaitForToken((String ncupToken) {
+      NcupGoToHarbor(ncupToken);
     });
 
-    billFallbackTimer =
-        Timer(const Duration(seconds: 8), () => _goBillHarbor(''));
+    NcupFallbackTimer = Timer(
+      const Duration(seconds: 8),
+          () => NcupGoToHarbor(''),
+    );
   }
 
-  void _goBillHarbor(String billSignal) {
-    if (billNavigatedOnce) return;
-    billNavigatedOnce = true;
-    billFallbackTimer?.cancel();
+  void NcupGoToHarbor(String ncupSignal) {
+    if (NcupNavigatedOnce) return;
+    NcupNavigatedOnce = true;
+    NcupFallbackTimer?.cancel();
 
     Navigator.pushReplacement(
       context,
       MaterialPageRoute<Widget>(
-        builder: (BuildContext billContext) =>
-            BillHarbor(billSignal: billSignal),
+        builder: (BuildContext context) => NcupHarbor(NcupSignal: ncupSignal),
       ),
     );
   }
 
   @override
   void dispose() {
-    billFallbackTimer?.cancel();
+    NcupFallbackTimer?.cancel();
+    NcupFcmBridgeInstance.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      backgroundColor: Colors.black,
-      body: Center(
-        child: BillXOLoader(),
-      ),
-    );
+    // Заменили стандартный индикатор на кастомный XO-лоадер
+    return const BillXOLoader();
   }
 }
 
@@ -505,191 +651,302 @@ class _BillHallState extends State<BillHall> {
 // ViewModel + Courier
 // ============================================================================
 
-class BillBosun {
-  final BillDeviceDeck billDeviceDeck;
-  final BillSpy billSpy;
+class NcupBosunViewModel {
+  final NcupDeviceProfile NcupDeviceProfileInstance;
+  final NcupAnalyticsSpyService NcupAnalyticsSpyInstance;
 
-  BillBosun({
-    required this.billDeviceDeck,
-    required this.billSpy,
+  NcupBosunViewModel({
+    required this.NcupDeviceProfileInstance,
+    required this.NcupAnalyticsSpyInstance,
   });
 
-  Map<String, dynamic> billDeviceMap(String? billToken) =>
-      billDeviceDeck.asBillMap(billFcm: billToken);
+  Map<String, dynamic> NcupDeviceMap(String? fcmToken) =>
+      NcupDeviceProfileInstance.NcupToMap(fcmToken: fcmToken);
 
-  Map<String, dynamic> billAfMap(String? billToken) => {
-    'content': {
-      'af_data': billSpy.billAfData,
-      'af_id': billSpy.billAfUid,
-      'fb_app_name': 'rollbillman',
-      'app_name': 'rollbillman',
-      'deep': null,
-      'bundle_identifier': 'com.bill.rollbill.rollbill',
-      'app_version': '1.0.0',
-      'apple_id': '6756072063',
-      'fcm_token': billToken ?? 'no_token',
-      'device_id': billDeviceDeck.billDeviceId ?? 'no_device',
-      'instance_id': billDeviceDeck.billSessionId ?? 'no_instance',
-      'platform': billDeviceDeck.billPlatformName ?? 'no_type',
-      'os_version': billDeviceDeck.billOsVersion ?? 'no_os',
-      'app_version': billDeviceDeck.billAppVersion ?? 'no_app',
-      'language': billDeviceDeck.billLang ?? 'en',
-      'timezone': billDeviceDeck.billTimezoneName ?? 'UTC',
-      'push_enabled': billDeviceDeck.billPushEnabled,
-      'useruid': billSpy.billAfUid,
-    },
-  };
+  Map<String, dynamic> NcupAppsFlyerPayload(
+      String? token, {
+        String? deepLink,
+      }) {
+    final Map<String, dynamic> onelinkData =
+        NcupAnalyticsSpyInstance.NcupAppsFlyerOneLinkData ??
+            <String, dynamic>{};
+
+    return <String, dynamic>{
+      'content': <String, dynamic>{
+        'af_data': NcupAnalyticsSpyInstance.NcupAppsFlyerData,
+        'af_id': NcupAnalyticsSpyInstance.NcupAppsFlyerUid,
+        'fb_app_name': 'rollbillman',
+        'app_name': 'rollbillman',
+        'onelink': onelinkData,
+        'bundle_identifier': 'com.bill.rollbill.rollbill',
+        'app_version': '1.4.0',
+        'apple_id': '6756670415',
+        'fcm_token': token ?? 'no_token',
+        'device_id': NcupDeviceProfileInstance.NcupDeviceId ?? 'no_device',
+        'instance_id':
+        NcupDeviceProfileInstance.NcupSessionId ?? 'no_instance',
+        'platform': NcupDeviceProfileInstance.NcupPlatformName ?? 'no_type',
+        'os_version': NcupDeviceProfileInstance.NcupOsVersion ?? 'no_os',
+        'language': NcupDeviceProfileInstance.NcupLanguageCode ?? 'en',
+        'timezone': NcupDeviceProfileInstance.NcupTimezoneName ?? 'UTC',
+        'push_enabled': NcupDeviceProfileInstance.NcupPushEnabled,
+        'useruid': NcupAnalyticsSpyInstance.NcupAppsFlyerUid,
+        'safearea': NcupDeviceProfileInstance.NcupSafeAreaEnabled,
+        'safearea_color':
+        NcupDeviceProfileInstance.NcupSafeAreaColor ?? '',
+        'useragent':
+        NcupDeviceProfileInstance.NcupBaseUserAgent ?? 'unknown_useragent',
+        'push':
+        NcupDeviceProfileInstance.NcupLastPushData ?? <String, dynamic>{},
+        'deep': deepLink,
+
+        // при необходимости сюда тоже можно добавить savels,
+        // но вы просили именно в NcupToMap/app_data
+      },
+    };
+  }
 }
 
-class BillCourier {
-  final BillBosun billBosun;
-  final InAppWebViewController Function() getBillWebView;
+class NcupCourierService {
+  final NcupBosunViewModel NcupBosun;
+  final InAppWebViewController? Function() NcupGetWebViewController;
 
-  BillCourier({
-    required this.billBosun,
-    required this.getBillWebView,
+  NcupCourierService({
+    required this.NcupBosun,
+    required this.NcupGetWebViewController,
   });
 
-  Future<void> putBillDeviceToLocalStorage(String? billToken) async {
-    final Map<String, dynamic> billMap = billBosun.billDeviceMap(billToken);
-    await getBillWebView().evaluateJavascript(
-      source: '''
-localStorage.setItem('app_data', JSON.stringify(${jsonEncode(billMap)}));
-''',
-    );
+  Future<InAppWebViewController?> _waitForController({
+    Duration timeout = const Duration(seconds: 10),
+    Duration interval = const Duration(milliseconds: 200),
+  }) async {
+    final NcupLoggerService logger = NcupLoggerService();
+    final DateTime start = DateTime.now();
+
+    while (DateTime.now().difference(start) < timeout) {
+      final InAppWebViewController? c = NcupGetWebViewController();
+      if (c != null) {
+        return c;
+      }
+      await Future<void>.delayed(interval);
+    }
+
+    logger.NcupLogWarn('_waitForController: timeout, controller is still null');
+    return null;
   }
 
-  Future<void> sendBillRawToPage(String? billToken) async {
-    final Map<String, dynamic> billPayload = billBosun.billAfMap(billToken);
-    final String billJsonString = jsonEncode(billPayload);
+  Future<void> NcupPutDeviceToLocalStorage(String? token) async {
+    final InAppWebViewController? ncupController = await _waitForController();
+    if (ncupController == null) return;
 
-    print('load stry$billJsonString');
-    BillBarrel().billLogInfo('SendGlowRawData: $billJsonString');
+    final Map<String, dynamic> ncupMap = NcupBosun.NcupDeviceMap(token);
+    NcupLoggerService().NcupLogInfo("applocal (${jsonEncode(ncupMap)});");
 
-    await getBillWebView().evaluateJavascript(
-      source: 'sendRawData(${jsonEncode(billJsonString)});',
-    );
+    try {
+      await ncupController.evaluateJavascript(
+        source:
+        "localStorage.setItem('app_data', JSON.stringify(${jsonEncode(ncupMap)}));",
+      );
+    } catch (e, st) {
+      NcupLoggerService()
+          .NcupLogError('NcupPutDeviceToLocalStorage error: $e\n$st');
+    }
+  }
+
+  Future<void> NcupSendRawToPage(
+      String? token, {
+        String? deepLink,
+      }) async {
+    final InAppWebViewController? ncupController = await _waitForController();
+    if (ncupController == null) return;
+
+    final Map<String, dynamic> ncupPayload =
+    NcupBosun.NcupAppsFlyerPayload(token, deepLink: deepLink);
+
+    final String ncupJsonString = jsonEncode(ncupPayload);
+
+    NcupLoggerService().NcupLogInfo('SendRawData: $ncupJsonString');
+
+    final String jsSafeJson = jsonEncode(ncupJsonString);
+    final String jsCode = 'sendRawData($jsSafeJson);';
+
+    try {
+      await ncupController.evaluateJavascript(source: jsCode);
+    } catch (e, st) {
+      NcupLoggerService()
+          .NcupLogError('NcupSendRawToPage evaluateJavascript error: $e\n$st');
+    }
   }
 }
 
 // ============================================================================
-// Переходы/статистика
+// Статистика
 // ============================================================================
 
-Future<String> billFinalUrl(
-    String billStartUrl, {
-      int billMaxHops = 10,
+Future<String> NcupResolveFinalUrl(
+    String startUrl, {
+      int maxHops = 10,
     }) async {
-  final HttpClient billHttpClient = HttpClient();
+  final HttpClient ncupHttpClient = HttpClient();
 
   try {
-    Uri billCurrentUri = Uri.parse(billStartUrl);
+    Uri ncupCurrentUri = Uri.parse(startUrl);
 
-    for (int billIndex = 0; billIndex < billMaxHops; billIndex++) {
-      final HttpClientRequest billRequest =
-      await billHttpClient.getUrl(billCurrentUri);
-      billRequest.followRedirects = false;
-      final HttpClientResponse billResponse = await billRequest.close();
+    for (int ncupIndex = 0; ncupIndex < maxHops; ncupIndex++) {
+      final HttpClientRequest ncupRequest =
+      await ncupHttpClient.getUrl(ncupCurrentUri);
+      ncupRequest.followRedirects = false;
+      final HttpClientResponse ncupResponse = await ncupRequest.close();
 
-      if (billResponse.isRedirect) {
-        final String? billLocationHeader =
-        billResponse.headers.value(HttpHeaders.locationHeader);
-        if (billLocationHeader == null || billLocationHeader.isEmpty) {
+      if (ncupResponse.isRedirect) {
+        final String? ncupLocationHeader =
+        ncupResponse.headers.value(HttpHeaders.locationHeader);
+        if (ncupLocationHeader == null || ncupLocationHeader.isEmpty) {
           break;
         }
 
-        final Uri billNextUri = Uri.parse(billLocationHeader);
-        billCurrentUri = billNextUri.hasScheme
-            ? billNextUri
-            : billCurrentUri.resolveUri(billNextUri);
+        final Uri ncupNextUri = Uri.parse(ncupLocationHeader);
+        ncupCurrentUri = ncupNextUri.hasScheme
+            ? ncupNextUri
+            : ncupCurrentUri.resolveUri(ncupNextUri);
         continue;
       }
 
-      return billCurrentUri.toString();
+      return ncupCurrentUri.toString();
     }
 
-    return billCurrentUri.toString();
-  } catch (billError) {
-    debugPrint('neonCinemaFinalUrl error: $billError');
-    return billStartUrl;
+    return ncupCurrentUri.toString();
+  } catch (error) {
+    print('goldenLuxuryResolveFinalUrl error: $error');
+    return startUrl;
   } finally {
-    billHttpClient.close(force: true);
+    ncupHttpClient.close(force: true);
   }
 }
 
-Future<void> billPostStat({
-  required String billEvent,
-  required int billTimeStart,
-  required String billUrl,
-  required int billTimeFinish,
-  required String billAppSid,
-  int? billFirstPageLoadTs,
+Future<void> NcupPostStat({
+  required String event,
+  required int timeStart,
+  required String url,
+  required int timeFinish,
+  required String appSid,
+  int? firstPageLoadTs,
 }) async {
   try {
-    final String billResolvedUrl = await billFinalUrl(billUrl);
+    final String ncupResolvedUrl = await NcupResolveFinalUrl(url);
 
-    final Map<String, dynamic> billPayload = <String, dynamic>{
-      'event': billEvent,
-      'timestart': billTimeStart,
-      'timefinsh': billTimeFinish,
-      'url': billResolvedUrl,
-      'appleID': '6756072063',
-      'open_count': '$billAppSid/$billTimeStart',
+    final Map<String, dynamic> ncupPayload = <String, dynamic>{
+      'event': event,
+      'timestart': timeStart,
+      'timefinsh': timeFinish,
+      'url': ncupResolvedUrl,
+      'appleID': '6756670415',
+      'open_count': '$appSid/$timeStart',
     };
 
-    debugPrint('neonCinemaStat $billPayload');
+    print('goldenLuxuryStat $ncupPayload');
 
-    final http.Response billResponse = await http.post(
-      Uri.parse('$billStatEndpoint/$billAppSid'),
-      headers: <String, String>{'Content-Type': 'application/json'},
-      body: jsonEncode(billPayload),
+    final http.Response ncupResponse = await http.post(
+      Uri.parse('$dressRetroStatEndpoint/$appSid'),
+      headers: <String, String>{
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode(ncupPayload),
     );
 
-    debugPrint(
-        'neonCinemaStat resp=${billResponse.statusCode} body=${billResponse.body}');
-  } catch (billError) {
-    debugPrint('neonCinemaPostStat error: $billError');
+    print(
+        'goldenLuxuryStat resp=${ncupResponse.statusCode} body=${ncupResponse.body}');
+  } catch (error) {
+    print('goldenLuxuryPostStat error: $error');
   }
+}
+
+// ============================================================================
+// Банковские утилиты
+// ============================================================================
+
+bool NcupIsBankScheme(Uri uri) {
+  final String scheme = uri.scheme.toLowerCase();
+  return kBankSchemes.contains(scheme);
+}
+
+bool NcupIsBankDomain(Uri uri) {
+  final String host = uri.host.toLowerCase();
+  if (host.isEmpty) return false;
+
+  for (final String bank in kBankDomains) {
+    final String bankHost = bank.toLowerCase();
+    if (host == bankHost || host.endsWith('.$bankHost')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+Future<bool> NcupOpenBank(Uri uri) async {
+  try {
+    if (NcupIsBankScheme(uri)) {
+      final bool ok = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      return ok;
+    }
+
+    if ((uri.scheme == 'http' || uri.scheme == 'https') &&
+        NcupIsBankDomain(uri)) {
+      final bool ok = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      return ok;
+    }
+  } catch (e) {
+    print('NcupOpenBank error: $e; url=$uri');
+  }
+  return false;
 }
 
 // ============================================================================
 // Главный WebView — Harbor
 // ============================================================================
 
-class BillHarbor extends StatefulWidget {
-  final String? billSignal;
+class NcupHarbor extends StatefulWidget {
+  final String? NcupSignal;
 
-  const BillHarbor({super.key, required this.billSignal});
+  const NcupHarbor({super.key, required this.NcupSignal});
 
   @override
-  State<BillHarbor> createState() => _BillHarborState();
+  State<NcupHarbor> createState() => _NcupHarborState();
 }
 
-class _BillHarborState extends State<BillHarbor> with WidgetsBindingObserver {
-  late InAppWebViewController billWebViewController;
-  final String billHomeUrl = 'https://api.saleclearens.store/';
+class _NcupHarborState extends State<NcupHarbor>
+    with WidgetsBindingObserver {
+  InAppWebViewController? NcupWebViewController;
+  final String NcupHomeUrl = 'https://api.rollman.biz/';
 
-  int billHatchCounter = 0;
-  DateTime? billSleepAt;
-  bool billVeilVisible = false;
-  double billWarmProgress = 0.0;
-  late Timer billWarmTimer;
-  final int billWarmSeconds = 6;
-  bool billCoverVisible = true;
+  int NcupWebViewKeyCounter = 0;
+  DateTime? NcupSleepAt;
+  bool NcupVeilVisible = false;
+  double NcupWarmProgress = 0.0;
+  late Timer NcupWarmTimer;
+  final int NcupWarmSeconds = 6;
+  bool NcupCoverVisible = true;
 
-  bool billLoadedOnceSent = false;
-  int? billFirstPageTimestamp;
+  bool NcupLoadedOnceSent = false;
+  int? NcupFirstPageTimestamp;
 
-  BillCourier? billCourier;
-  BillBosun? billBosun;
+  NcupCourierService? NcupCourier;
+  NcupBosunViewModel? NcupBosunInstance;
 
-  String billCurrentUrl = '';
-  int billStartLoadTimestamp = 0;
+  String NcupCurrentUrl = '';
+  int NcupStartLoadTimestamp = 0;
 
-  final BillDeviceDeck billDeviceDeck = BillDeviceDeck();
-  final BillSpy billSpy = BillSpy();
-  bool billUseSafeArea = false;
-  final Set<String> billSchemes = <String>{
+  final NcupDeviceProfile NcupDeviceProfileInstance = NcupDeviceProfile();
+  final NcupAnalyticsSpyService NcupAnalyticsSpyInstance =
+  NcupAnalyticsSpyService();
+
+  final Set<String> NcupSpecialSchemes = <String>{
     'tg',
     'telegram',
     'whatsapp',
@@ -702,7 +959,7 @@ class _BillHarborState extends State<BillHarbor> with WidgetsBindingObserver {
     'bnl',
   };
 
-  final Set<String> billExternalHosts = <String>{
+  final Set<String> NcupExternalHosts = <String>{
     't.me',
     'telegram.me',
     'telegram.dog',
@@ -713,7 +970,6 @@ class _BillHarborState extends State<BillHarbor> with WidgetsBindingObserver {
     'signal.me',
     'bnl.com',
     'www.bnl.com',
-    // Новые соцсети
     'facebook.com',
     'www.facebook.com',
     'm.facebook.com',
@@ -725,16 +981,43 @@ class _BillHarborState extends State<BillHarbor> with WidgetsBindingObserver {
     'www.x.com',
   };
 
+  String? NcupDeepLinkFromPush;
+
+  String? _baseUserAgent;
+  String _currentUserAgent = "";
+  String? _currentUrl;
+
+  String? _serverUserAgent;
+
+  bool _safeAreaEnabled = false;
+  Color _safeAreaBackgroundColor = const Color(0xFF000000);
+
+  bool _startupSendRawDone = false;
+
+  String? _pendingLoadedJs;
+
+  bool _loadedJsExecutedOnce = false;
+
+  bool _isInGoogleAuth = false;
+
+  // buttonswl/back
+  List<String> _buttonWhitelist = <String>[];
+  bool _showBackButton = false;
+
+  static const MethodChannel _appsFlyerDeepLinkChannel =
+  MethodChannel('appsflyer_deeplink_channel');
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    billFirstPageTimestamp = DateTime.now().millisecondsSinceEpoch;
+    NcupFirstPageTimestamp = DateTime.now().millisecondsSinceEpoch;
+    _currentUrl = NcupHomeUrl;
 
     Future<void>.delayed(const Duration(seconds: 2), () {
       if (mounted) {
         setState(() {
-          billCoverVisible = false;
+          NcupCoverVisible = false;
         });
       }
     });
@@ -742,213 +1025,543 @@ class _BillHarborState extends State<BillHarbor> with WidgetsBindingObserver {
     Future<void>.delayed(const Duration(seconds: 7), () {
       if (!mounted) return;
       setState(() {
-        billVeilVisible = true;
+        NcupVeilVisible = true;
       });
     });
 
-    _bootBill();
+    _bindPushChannelFromAppDelegate();
+    _bindAppsFlyerDeepLinkChannel();
+    NcupBootHarbor();
   }
 
-  Future<void> _loadBillLoadedFlag() async {
-    final SharedPreferences billPrefs =
-    await SharedPreferences.getInstance();
-    billLoadedOnceSent = billPrefs.getBool(billLoadedOnceKey) ?? false;
-  }
+  // ======================= AppsFlyer deep link bridge =======================
 
-  Future<void> _saveBillLoadedFlag() async {
-    final SharedPreferences billPrefs =
-    await SharedPreferences.getInstance();
-    await billPrefs.setBool(billLoadedOnceKey, true);
-    billLoadedOnceSent = true;
-  }
+  void _bindAppsFlyerDeepLinkChannel() {
+    _appsFlyerDeepLinkChannel.setMethodCallHandler(
+          (MethodCall call) async {
+        if (call.method == 'onDeepLink') {
+          try {
+            final dynamic args = call.arguments;
 
-  Future<void> sendBillLoadedOnce({
-    required String billUrl,
-    required int billTimestart,
-  }) async {
-    if (billLoadedOnceSent) {
-      debugPrint('Loaded already sent, skip');
-      return;
-    }
+            Map<String, dynamic> payload;
 
-    final int billNow = DateTime.now().millisecondsSinceEpoch;
+            print(" Data Deepl link ${args.toString()}");
+            if (args is Map) {
+              payload = Map<String, dynamic>.from(args as Map);
+            } else if (args is String) {
+              payload = jsonDecode(args) as Map<String, dynamic>;
+            } else {
+              payload = <String, dynamic>{'raw': args.toString()};
+            }
 
-    await billPostStat(
-      billEvent: 'Loaded',
-      billTimeStart: billTimestart,
-      billTimeFinish: billNow,
-      billUrl: billUrl,
-      billAppSid: billSpy.billAfUid,
-      billFirstPageLoadTs: billFirstPageTimestamp,
+            NcupLoggerService().NcupLogInfo(
+              'AppsFlyer onDeepLink from iOS: $payload',
+            );
+
+            final dynamic raw = payload['raw'];
+            if (raw is Map) {
+              final Map<String, dynamic> normalized =
+              Map<String, dynamic>.from(raw as Map);
+
+              print("One Link Data $normalized");
+              NcupAnalyticsSpyInstance.NcupSetOneLinkData(normalized);
+            } else {
+              NcupAnalyticsSpyInstance.NcupSetOneLinkData(payload);
+            }
+          } catch (e, st) {
+            NcupLoggerService()
+                .NcupLogError('Error in onDeepLink handler: $e\n$st');
+          }
+        }
+      },
     );
-
-    await _saveBillLoadedFlag();
   }
 
-  void _bootBill() {
-    _startBillWarmProgress();
-    _wireBillFcm();
-    billSpy.startBillSpy(
-      onBillUpdate: () => setState(() {}),
-    );
-    _bindBillNotificationTap();
-    _prepareBillDeck();
+  // ======================= Push Data bridge из AppDelegate ==================
 
-    Future<void>.delayed(const Duration(seconds: 6), () async {
-      await _pushBillDevice();
-      await _pushBillAfData();
-    });
-  }
+  void _bindPushChannelFromAppDelegate() {
+    const MethodChannel pushChannel = MethodChannel('com.example.fcm/push');
 
-  void _wireBillFcm() {
-    FirebaseMessaging.onMessage.listen((RemoteMessage billMessage) {
-      final dynamic billLink = billMessage.data['uri'];
-      if (billLink != null) {
-        _navigateBill(billLink.toString());
-      } else {
-        _resetBillHome();
-      }
-    });
+    pushChannel.setMethodCallHandler((MethodCall call) async {
+      if (call.method == 'setPushData') {
+        try {
+          Map<String, dynamic> pushData;
+          if (call.arguments is Map) {
+            pushData = Map<String, dynamic>.from(call.arguments);
+            print("Get Push Data $pushData");
+          } else if (call.arguments is String) {
+            pushData =
+            jsonDecode(call.arguments as String) as Map<String, dynamic>;
+          } else {
+            pushData = <String, dynamic>{'raw': call.arguments.toString()};
+          }
 
-    FirebaseMessaging.onMessageOpenedApp
-        .listen((RemoteMessage billMessage) {
-      final dynamic billLink = billMessage.data['uri'];
-      if (billLink != null) {
-        _navigateBill(billLink.toString());
-      } else {
-        _resetBillHome();
-      }
-    });
-  }
+          NcupLoggerService()
+              .NcupLogInfo('Got push data from AppDelegate: $pushData');
 
-  void _bindBillNotificationTap() {
-    MethodChannel('com.example.fcm/notification')
-        .setMethodCallHandler((MethodCall billCall) async {
-      if (billCall.method == 'onNotificationTap') {
-        final Map<String, dynamic> billPayload =
-        Map<String, dynamic>.from(billCall.arguments);
-        if (billPayload['uri'] != null &&
-            !billPayload['uri'].toString().contains('Нет URI')) {
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute<Widget>(
-              builder: (BuildContext billContext) =>
-                  BillCoreTableView (billPayload['uri'].toString()),
-            ),
-                (Route<dynamic> billRoute) => false,
-          );
+          NcupDeviceProfileInstance.NcupLastPushData = pushData;
+
+          print("Get P Data "+pushData.toString());
+
+          final dynamic uriRaw = pushData['uri'] ?? pushData['deep_link'];
+          if (uriRaw != null && uriRaw.toString().isNotEmpty) {
+            final String u = uriRaw.toString();
+            NcupDeepLinkFromPush = u;
+            await NcupSaveCachedDeep(u);
+          }
+        } catch (e, st) {
+          NcupLoggerService()
+              .NcupLogError('setPushData handler error: $e\n$st');
         }
       }
     });
   }
 
-  Future<void> _prepareBillDeck() async {
+  // ---------------- User-Agent ----------------
+
+  Future<void> _updateUserAgentFromServerPayload(
+      Map<dynamic, dynamic> root) async {
+    String? fullua;
+    String? uatail;
+
+    final dynamic content = root['content'];
+    if (content is Map) {
+      if (content['fullua'] != null &&
+          content['fullua'].toString().trim().isNotEmpty) {
+        fullua = content['fullua'].toString().trim();
+      }
+      if (content['uatail'] != null &&
+          content['uatail'].toString().trim().isNotEmpty) {
+        uatail = content['uatail'].toString().trim();
+      }
+    }
+
+    if (fullua == null &&
+        root['fullua'] != null &&
+        root['fullua'].toString().trim().isNotEmpty) {
+      fullua = root['fullua'].toString().trim();
+    }
+    if (uatail == null &&
+        root['uatail'] != null &&
+        root['uatail'].toString().trim().isNotEmpty) {
+      uatail = root['uatail'].toString().trim();
+    }
+
+    if (uatail == null) {
+      final dynamic adata = root['adata'];
+      if (adata is Map &&
+          adata['uatail'] != null &&
+          adata['uatail'].toString().trim().isNotEmpty) {
+        uatail = adata['uatail'].toString().trim();
+      }
+    }
+
+    await _applyUserAgent(fullua: fullua, uatail: uatail);
+  }
+
+  Future<void> _applyUserAgent({String? fullua, String? uatail}) async {
+    if (NcupWebViewController == null) return;
+
+    if (_baseUserAgent == null || _baseUserAgent!.trim().isEmpty) {
+      try {
+        final ua = await NcupWebViewController!.evaluateJavascript(
+          source: "navigator.userAgent",
+        );
+        if (ua is String && ua.trim().isNotEmpty) {
+          _baseUserAgent = ua.trim();
+          _currentUserAgent = _baseUserAgent!;
+          NcupDeviceProfileInstance.NcupBaseUserAgent = _baseUserAgent;
+          NcupLoggerService()
+              .NcupLogInfo('Base User-Agent detected: $_baseUserAgent');
+        }
+      } catch (e) {
+        NcupLoggerService()
+            .NcupLogWarn('Failed to get base userAgent from JS: $e');
+      }
+    }
+
+    if (_baseUserAgent == null || _baseUserAgent!.trim().isEmpty) {
+      NcupLoggerService()
+          .NcupLogWarn('Base User-Agent is still null/empty, skip UA update');
+      return;
+    }
+
+    NcupLoggerService().NcupLogInfo(
+        'Server UA payload: fullua="$fullua", uatail="$uatail", base="$_baseUserAgent"');
+
+    String newUa;
+    if (fullua != null && fullua.trim().isNotEmpty) {
+      newUa = fullua.trim();
+    } else if (uatail != null && uatail.trim().isNotEmpty) {
+      newUa = "${_baseUserAgent!}/${uatail.trim()}";
+    } else {
+      newUa = "${_baseUserAgent!}";
+    }
+
+    _serverUserAgent = newUa;
+    NcupLoggerService()
+        .NcupLogInfo('Server UA calculated and stored: $_serverUserAgent');
+  }
+
+  Future<void> _applyNormalUserAgentIfNeeded() async {
+    if (NcupWebViewController == null) return;
+
+    if (_isInGoogleAuth) {
+      NcupLoggerService().NcupLogInfo(
+          'Skip normal UA apply because we are in Google auth flow');
+      return;
+    }
+
+    final String targetUa = _serverUserAgent ?? _baseUserAgent ?? 'random';
+
+    if (targetUa == _currentUserAgent) {
+      NcupLoggerService()
+          .NcupLogInfo('Normal UA unchanged, keeping: $_currentUserAgent');
+      return;
+    }
+
+    NcupLoggerService()
+        .NcupLogInfo('Applying NORMAL WebView User-Agent: $targetUa');
+
     try {
-      await billDeviceDeck.initBillDeviceDeck();
-      await _askBillPushPermissions();
-
-      billBosun = BillBosun(
-        billDeviceDeck: billDeviceDeck,
-        billSpy: billSpy,
+      await NcupWebViewController!.setSettings(
+        settings: InAppWebViewSettings(userAgent: targetUa),
       );
-
-      billCourier = BillCourier(
-        billBosun: billBosun!,
-        getBillWebView: () => billWebViewController,
-      );
-
-      await _loadBillLoadedFlag();
-    } catch (billError) {
-      BillBarrel().billLogError('prepare fail: $billError');
+      _currentUserAgent = targetUa;
+      print('[UA] NORMAL WEBVIEW USER AGENT: $_currentUserAgent');
+    } catch (e) {
+      NcupLoggerService()
+          .NcupLogError('Error while setting normal User-Agent "$targetUa": $e');
     }
   }
 
-  Future<void> _askBillPushPermissions() async {
-    final FirebaseMessaging billMessaging = FirebaseMessaging.instance;
-    await billMessaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
+  Future<void> printJsUserAgent() async {
+    if (NcupWebViewController == null) return;
+
+    try {
+      final ua = await NcupWebViewController!.evaluateJavascript(
+        source: "navigator.userAgent",
+      );
+
+      if (ua is String) {
+        print('[JS UA] navigator.userAgent = $ua');
+      } else {
+        print('[JS UA] navigator.userAgent (non-string) = $ua');
+      }
+    } catch (e, st) {
+      print('Error reading navigator.userAgent: $e\n$st');
+    }
+  }
+
+  Future<void> debugPrintCurrentUserAgent() async {
+    NcupLoggerService()
+        .NcupLogInfo('[STATE UA] _currentUserAgent = $_currentUserAgent');
+    await printJsUserAgent();
+  }
+
+  // ---------- Логика для Google ----------
+
+  bool _isGoogleUrl(Uri uri) {
+    final String full = uri.toString().toLowerCase();
+    return full.contains('google');
+  }
+
+  Future<void> _addRandomToUserAgentForGoogle() async {
+    if (NcupWebViewController == null) return;
+
+    const String targetUa = 'random';
+
+    if (_currentUserAgent == targetUa && _isInGoogleAuth) {
+      NcupLoggerService()
+          .NcupLogInfo('Already in Google flow with random UA, skip reapply');
+      return;
+    }
+
+    NcupLoggerService().NcupLogInfo(
+        'Switching User-Agent to RANDOM for Google URL: $targetUa');
+
+    try {
+      await NcupWebViewController!.setSettings(
+        settings: InAppWebViewSettings(userAgent: targetUa),
+      );
+      _currentUserAgent = targetUa;
+      _isInGoogleAuth = true;
+      print('[UA] GOOGLE RANDOM USER AGENT: $_currentUserAgent');
+    } catch (e) {
+      NcupLoggerService().NcupLogError(
+          'Error while setting RANDOM User-Agent for Google URL: $e');
+    }
+  }
+
+  Future<void> _restoreUserAgentAfterGoogleIfNeeded() async {
+    if (!_isInGoogleAuth) {
+      return;
+    }
+    NcupLoggerService()
+        .NcupLogInfo('Restoring normal User-Agent after leaving Google URL');
+    _isInGoogleAuth = false;
+    await _applyNormalUserAgentIfNeeded();
+  }
+
+  Future<void> NcupLoadLoadedFlag() async {
+    final SharedPreferences ncupPrefs = await SharedPreferences.getInstance();
+    NcupLoadedOnceSent = ncupPrefs.getBool(dressRetroLoadedOnceKey) ?? false;
+  }
+
+  Future<void> NcupSaveLoadedFlag() async {
+    final SharedPreferences ncupPrefs = await SharedPreferences.getInstance();
+    await ncupPrefs.setBool(dressRetroLoadedOnceKey, true);
+    NcupLoadedOnceSent = true;
+  }
+
+  Future<void> NcupLoadCachedDeep() async {
+    try {
+      final SharedPreferences ncupPrefs = await SharedPreferences.getInstance();
+      final String? ncupCached = ncupPrefs.getString(dressRetroCachedDeepKey);
+      if ((ncupCached ?? '').isNotEmpty) {
+        NcupDeepLinkFromPush = ncupCached;
+      }
+    } catch (_) {}
+  }
+
+  Future<void> NcupSaveCachedDeep(String uri) async {
+    try {
+      final SharedPreferences ncupPrefs = await SharedPreferences.getInstance();
+      await ncupPrefs.setString(dressRetroCachedDeepKey, uri);
+    } catch (_) {}
+  }
+
+  Future<void> NcupSendLoadedOnce({
+    required String url,
+    required int timestart,
+  }) async {
+    if (NcupLoadedOnceSent) return;
+
+    final int ncupNow = DateTime.now().millisecondsSinceEpoch;
+
+    await NcupPostStat(
+      event: 'Loaded',
+      timeStart: timestart,
+      timeFinish: ncupNow,
+      url: url,
+      appSid: NcupAnalyticsSpyInstance.NcupAppsFlyerUid,
+      firstPageLoadTs: NcupFirstPageTimestamp,
     );
+
+    await NcupSaveLoadedFlag();
   }
 
-  void _navigateBill(String billLink) async {
+  void NcupBootHarbor() {
+    NcupStartWarmProgress();
+    NcupWireFcmHandlers();
+    NcupAnalyticsSpyInstance.NcupStartTracking(
+      onUpdate: () => setState(() {}),
+    );
+    NcupBindNotificationTap();
+    NcupPrepareDeviceProfile();
+  }
+
+  // ====================== FCM ========================
+
+  void NcupWireFcmHandlers() {
+    FirebaseMessaging.onMessage.listen((RemoteMessage ncupMessage) async {
+      final dynamic ncupLink = ncupMessage.data['uri'];
+      if (ncupLink != null) {
+        final String ncupUri = ncupLink.toString();
+        NcupDeepLinkFromPush = ncupUri;
+        await NcupSaveCachedDeep(ncupUri);
+      } else {
+        NcupResetHomeAfterDelay();
+      }
+    });
+
+    FirebaseMessaging.onMessageOpenedApp
+        .listen((RemoteMessage ncupMessage) async {
+      final dynamic ncupLink = ncupMessage.data['uri'];
+      if (ncupLink != null) {
+        final String ncupUri = ncupLink.toString();
+        NcupDeepLinkFromPush = ncupUri;
+        await NcupSaveCachedDeep(ncupUri);
+
+        NcupNavigateToUri(ncupUri);
+
+        await NcupPushDeviceInfo();
+        await NcupPushAppsFlyerData();
+      } else {
+        NcupResetHomeAfterDelay();
+      }
+    });
+  }
+
+  // ====================== Tap по пушу с native ============================
+
+  void NcupBindNotificationTap() {
+    MethodChannel('com.example.fcm/notification')
+        .setMethodCallHandler((MethodCall call) async {
+      if (call.method == 'onNotificationTap') {
+        final Map<String, dynamic> ncupPayload =
+        Map<String, dynamic>.from(call.arguments);
+        final String? ncupUriRaw = ncupPayload['uri']?.toString();
+
+        if (ncupUriRaw != null &&
+            ncupUriRaw.isNotEmpty &&
+            !ncupUriRaw.contains('Нет URI')) {
+          final String ncupUri = ncupUriRaw;
+          NcupDeepLinkFromPush = ncupUri;
+          await NcupSaveCachedDeep(ncupUri);
+
+          if (!context.mounted) return;
+
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute<Widget>(
+              builder: (BuildContext context) => BillCoreTableView(ncupUri),
+            ),
+                (Route<dynamic> route) => false,
+          );
+
+          await NcupPushDeviceInfo();
+          await NcupPushAppsFlyerData();
+        }
+      }
+    });
+  }
+
+  Future<void> NcupPrepareDeviceProfile() async {
     try {
-      await billWebViewController.loadUrl(
-        urlRequest: URLRequest(url: WebUri(billLink)),
+      await NcupDeviceProfileInstance.NcupInitialize();
+
+      final FirebaseMessaging ncupMessaging = FirebaseMessaging.instance;
+      final NotificationSettings ncupSettings =
+      await ncupMessaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
       );
-    } catch (billError) {
-      BillBarrel().billLogError('navigate error: $billError');
+
+      NcupDeviceProfileInstance.NcupPushEnabled =
+          ncupSettings.authorizationStatus == AuthorizationStatus.authorized ||
+              ncupSettings.authorizationStatus ==
+                  AuthorizationStatus.provisional;
+
+      await NcupLoadLoadedFlag();
+      await NcupLoadCachedDeep();
+
+      NcupBosunInstance = NcupBosunViewModel(
+        NcupDeviceProfileInstance: NcupDeviceProfileInstance,
+        NcupAnalyticsSpyInstance: NcupAnalyticsSpyInstance,
+      );
+
+      NcupCourier = NcupCourierService(
+        NcupBosun: NcupBosunInstance!,
+        NcupGetWebViewController: () => NcupWebViewController,
+      );
+    } catch (error) {
+      NcupLoggerService().NcupLogError('prepareDeviceProfile fail: $error');
     }
   }
 
-  void _resetBillHome() {
+  void NcupNavigateToUri(String link) async {
+    try {
+      await NcupWebViewController?.loadUrl(
+        urlRequest: URLRequest(url: WebUri(link)),
+      );
+    } catch (error) {
+      NcupLoggerService().NcupLogError('navigate error: $error');
+    }
+  }
+
+  void NcupResetHomeAfterDelay() {
     Future<void>.delayed(const Duration(seconds: 3), () {
       try {
-        billWebViewController.loadUrl(
-          urlRequest: URLRequest(url: WebUri(billHomeUrl)),
+        NcupWebViewController?.loadUrl(
+          urlRequest: URLRequest(url: WebUri(NcupHomeUrl)),
         );
       } catch (_) {}
     });
   }
 
-  Future<void> _pushBillDevice() async {
-    BillBarrel().billLogInfo('TOKEN ship ${widget.billSignal}');
+  String? _resolveTokenForShip() {
+    if (widget.NcupSignal != null && widget.NcupSignal!.isNotEmpty) {
+      return widget.NcupSignal;
+    }
+    return null;
+  }
+
+  Future<void> _sendAllDataToPageTwice() async {
+    await NcupPushDeviceInfo();
+    // можно отправлять и AppsFlyer, если нужно
+    // await NcupPushAppsFlyerData();
+
+    Future<void>.delayed(const Duration(seconds: 6), () async {
+      await NcupPushDeviceInfo();
+      await NcupPushAppsFlyerData();
+    });
+  }
+
+  Future<void> NcupPushDeviceInfo() async {
+    final String? ncupToken = _resolveTokenForShip();
+
     try {
-      await billCourier?.putBillDeviceToLocalStorage(widget.billSignal);
-    } catch (billError) {
-      BillBarrel().billLogError('pushGlowDevice error: $billError');
+      await NcupCourier?.NcupPutDeviceToLocalStorage(ncupToken);
+    } catch (error) {
+      NcupLoggerService().NcupLogError('pushDeviceInfo error: $error');
     }
   }
 
-  Future<void> _pushBillAfData() async {
+  Future<void> NcupPushAppsFlyerData() async {
+    final String? ncupToken = _resolveTokenForShip();
+
     try {
-      await billCourier?.sendBillRawToPage(widget.billSignal);
-    } catch (billError) {
-      BillBarrel().billLogError('pushGlowAf error: $billError');
+      await NcupCourier?.NcupSendRawToPage(
+        ncupToken,
+        deepLink: NcupDeepLinkFromPush,
+      );
+    } catch (error) {
+      NcupLoggerService().NcupLogError('pushAppsFlyerData error: $error');
     }
   }
 
-  void _startBillWarmProgress() {
-    int billTick = 0;
-    billWarmProgress = 0.0;
+  void NcupStartWarmProgress() {
+    int ncupTick = 0;
+    NcupWarmProgress = 0.0;
 
-    billWarmTimer =
-        Timer.periodic(const Duration(milliseconds: 100), (Timer billTimer) {
+    NcupWarmTimer =
+        Timer.periodic(const Duration(milliseconds: 100), (Timer timer) {
           if (!mounted) return;
 
           setState(() {
-            billTick++;
-            billWarmProgress = billTick / (billWarmSeconds * 10);
+            ncupTick++;
+            NcupWarmProgress = ncupTick / (NcupWarmSeconds * 10);
 
-            if (billWarmProgress >= 1.0) {
-              billWarmProgress = 1.0;
-              billWarmTimer.cancel();
+            if (NcupWarmProgress >= 1.0) {
+              NcupWarmProgress = 1.0;
+              NcupWarmTimer.cancel();
             }
           });
         });
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState billState) {
-    if (billState == AppLifecycleState.paused) {
-      billSleepAt = DateTime.now();
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      NcupSleepAt = DateTime.now();
     }
 
-    if (billState == AppLifecycleState.resumed) {
-      if (Platform.isIOS && billSleepAt != null) {
-        final DateTime billNow = DateTime.now();
-        final Duration billDrift = billNow.difference(billSleepAt!);
+    if (state == AppLifecycleState.resumed) {
+      if (Platform.isIOS && NcupSleepAt != null) {
+        final DateTime ncupNow = DateTime.now();
+        final Duration ncupDrift = ncupNow.difference(NcupSleepAt!);
 
-        if (billDrift > const Duration(minutes: 25)) {
-          reboardBill();
+        if (ncupDrift > const Duration(minutes: 25)) {
+          NcupReboardHarbor();
         }
       }
-      billSleepAt = null;
+      NcupSleepAt = null;
     }
   }
 
-  void reboardBill() {
+  void NcupReboardHarbor() {
     if (!mounted) return;
 
     WidgetsBinding.instance.addPostFrameCallback((Duration _) {
@@ -957,10 +1570,10 @@ class _BillHarborState extends State<BillHarbor> with WidgetsBindingObserver {
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute<Widget>(
-          builder: (BuildContext billContext) =>
-              BillHarbor(billSignal: widget.billSignal),
+          builder: (BuildContext context) =>
+              NcupHarbor(NcupSignal: widget.NcupSignal),
         ),
-            (Route<dynamic> billRoute) => false,
+            (Route<dynamic> route) => false,
       );
     });
   }
@@ -968,114 +1581,183 @@ class _BillHarborState extends State<BillHarbor> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    billWarmTimer.cancel();
+    NcupWarmTimer.cancel();
     super.dispose();
   }
 
-  // ================== URL helpers ==================
+  // ===================== Email / mailto =====================
 
-  bool _isBillBareEmail(Uri billUri) {
-    final String billScheme = billUri.scheme;
-    if (billScheme.isNotEmpty) return false;
-    final String billRaw = billUri.toString();
-    return billRaw.contains('@') && !billRaw.contains(' ');
+  bool NcupIsBareEmail(Uri uri) {
+    final String ncupScheme = uri.scheme;
+    if (ncupScheme.isNotEmpty) return false;
+    final String ncupRaw = uri.toString();
+    return ncupRaw.contains('@') && !ncupRaw.contains(' ');
   }
 
-  Uri _toBillMailto(Uri billUri) {
-    final String billFull = billUri.toString();
-    final List<String> billParts = billFull.split('?');
-    final String billEmail = billParts.first;
-    final Map<String, String> billQueryParams = billParts.length > 1
-        ? Uri.splitQueryString(billParts[1])
+  Uri NcupToMailto(Uri uri) {
+    final String ncupFull = uri.toString();
+    final List<String> ncupParts = ncupFull.split('?');
+    final String ncupEmail = ncupParts.first;
+    final Map<String, String> ncupQueryParams = ncupParts.length > 1
+        ? Uri.splitQueryString(ncupParts[1])
         : <String, String>{};
 
     return Uri(
       scheme: 'mailto',
-      path: billEmail,
-      queryParameters:
-      billQueryParams.isEmpty ? null : billQueryParams,
+      path: ncupEmail,
+      queryParameters: ncupQueryParams.isEmpty ? null : ncupQueryParams,
     );
   }
 
-  bool _isBillPlatformish(Uri billUri) {
-    final String billScheme = billUri.scheme.toLowerCase();
-    if (billSchemes.contains(billScheme)) {
+  /// Открытие mailto: + fallback в Gmail Web, если нет клиента
+  Future<bool> NcupOpenMailExternal(Uri mailto) async {
+    try {
+      final String scheme = mailto.scheme.toLowerCase();
+      final String path = mailto.path.toLowerCase();
+
+      NcupLoggerService().NcupLogInfo(
+          'NcupOpenMailExternal: scheme=$scheme path=$path uri=$mailto');
+
+      if (scheme != 'mailto') {
+        final bool ok = await launchUrl(
+          mailto,
+          mode: LaunchMode.externalApplication,
+        );
+        NcupLoggerService()
+            .NcupLogInfo('NcupOpenMailExternal: non-mailto result=$ok');
+        return ok;
+      }
+
+      final bool can = await canLaunchUrl(mailto);
+      NcupLoggerService()
+          .NcupLogInfo('NcupOpenMailExternal: canLaunchUrl(mailto) = $can');
+
+      if (can) {
+        final bool ok = await launchUrl(
+          mailto,
+          mode: LaunchMode.externalApplication,
+        );
+        NcupLoggerService()
+            .NcupLogInfo('NcupOpenMailExternal: externalApplication result=$ok');
+        if (ok) return true;
+      }
+
+      NcupLoggerService().NcupLogWarn(
+          'NcupOpenMailExternal: no native handler for mailto, fallback to Gmail Web');
+      final Uri gmailUri = NcupGmailizeMailto(mailto);
+      final bool webOk = await NcupOpenWeb(gmailUri);
+      NcupLoggerService()
+          .NcupLogInfo('NcupOpenMailExternal: Gmail Web fallback result=$webOk');
+      return webOk;
+    } catch (e, st) {
+      NcupLoggerService()
+          .NcupLogError('NcupOpenMailExternal error: $e\n$st; url=$mailto');
+      return false;
+    }
+  }
+
+  Future<bool> NcupOpenMailWeb(Uri mailto) async {
+    final Uri ncupGmailUri = NcupGmailizeMailto(mailto);
+    return NcupOpenWeb(ncupGmailUri);
+  }
+
+  Uri NcupGmailizeMailto(Uri mailUri) {
+    final Map<String, String> ncupQueryParams = mailUri.queryParameters;
+
+    final Map<String, String> ncupParams = <String, String>{
+      'view': 'cm',
+      'fs': '1',
+      if (mailUri.path.isNotEmpty) 'to': mailUri.path,
+      if ((ncupQueryParams['subject'] ?? '').isNotEmpty)
+        'su': ncupQueryParams['subject']!,
+      if ((ncupQueryParams['body'] ?? '').isNotEmpty)
+        'body': ncupQueryParams['body']!,
+      if ((ncupQueryParams['cc'] ?? '').isNotEmpty)
+        'cc': ncupQueryParams['cc']!,
+      if ((ncupQueryParams['bcc'] ?? '').isNotEmpty)
+        'bcc': ncupQueryParams['bcc']!,
+    };
+
+    return Uri.https('mail.google.com', '/mail/', ncupParams);
+  }
+
+  // =========================================================
+
+  bool NcupIsPlatformLink(Uri uri) {
+    final String ncupScheme = uri.scheme.toLowerCase();
+    if (NcupSpecialSchemes.contains(ncupScheme)) {
       return true;
     }
 
-    if (billScheme == 'http' || billScheme == 'https') {
-      final String billHost = billUri.host.toLowerCase();
+    if (ncupScheme == 'http' || ncupScheme == 'https') {
+      final String ncupHost = uri.host.toLowerCase();
 
-      if (billExternalHosts.contains(billHost)) {
+      if (NcupExternalHosts.contains(ncupHost)) {
         return true;
       }
 
-      if (billHost.endsWith('t.me')) return true;
-      if (billHost.endsWith('wa.me')) return true;
-      if (billHost.endsWith('m.me')) return true;
-      if (billHost.endsWith('signal.me')) return true;
-      if (billHost.endsWith('facebook.com')) return true;
-      if (billHost.endsWith('instagram.com')) return true;
-      if (billHost.endsWith('twitter.com')) return true;
-      if (billHost.endsWith('x.com')) return true;
+      if (ncupHost.endsWith('t.me')) return true;
+      if (ncupHost.endsWith('wa.me')) return true;
+      if (ncupHost.endsWith('m.me')) return true;
+      if (ncupHost.endsWith('signal.me')) return true;
+      if (ncupHost.endsWith('facebook.com')) return true;
+      if (ncupHost.endsWith('instagram.com')) return true;
+      if (ncupHost.endsWith('twitter.com')) return true;
+      if (ncupHost.endsWith('x.com')) return true;
     }
 
     return false;
   }
 
-  String _billDigitsOnly(String billSource) =>
-      billSource.replaceAll(RegExp(r'[^0-9+]'), '');
+  String NcupDigitsOnly(String source) =>
+      source.replaceAll(RegExp(r'[^0-9+]'), '');
 
-  Uri _billHttpize(Uri billUri) {
-    final String billScheme = billUri.scheme.toLowerCase();
+  Uri NcupHttpizePlatformUri(Uri uri) {
+    final String ncupScheme = uri.scheme.toLowerCase();
 
-    if (billScheme == 'tg' || billScheme == 'telegram') {
-      final Map<String, String> billQp = billUri.queryParameters;
-      final String? billDomain = billQp['domain'];
+    if (ncupScheme == 'tg' || ncupScheme == 'telegram') {
+      final Map<String, String> ncupQp = uri.queryParameters;
+      final String? ncupDomain = ncupQp['domain'];
 
-      if (billDomain != null && billDomain.isNotEmpty) {
+      if (ncupDomain != null && ncupDomain.isNotEmpty) {
         return Uri.https(
           't.me',
-          '/$billDomain',
+          '/$ncupDomain',
           <String, String>{
-            if (billQp['start'] != null) 'start': billQp['start']!,
+            if (ncupQp['start'] != null) 'start': ncupQp['start']!,
           },
         );
       }
 
-      final String billPath =
-      billUri.path.isNotEmpty ? billUri.path : '';
+      final String ncupPath = uri.path.isNotEmpty ? uri.path : '';
 
       return Uri.https(
         't.me',
-        '/$billPath',
-        billUri.queryParameters.isEmpty
-            ? null
-            : billUri.queryParameters,
+        '/$ncupPath',
+        uri.queryParameters.isEmpty ? null : uri.queryParameters,
       );
     }
 
-    if ((billScheme == 'http' || billScheme == 'https') &&
-        billUri.host.toLowerCase().endsWith('t.me')) {
-      return billUri;
+    if ((ncupScheme == 'http' || ncupScheme == 'https') &&
+        uri.host.toLowerCase().endsWith('t.me')) {
+      return uri;
     }
 
-    if (billScheme == 'viber') {
-      return billUri;
+    if (ncupScheme == 'viber') {
+      return uri;
     }
 
-    if (billScheme == 'whatsapp') {
-      final Map<String, String> billQp = billUri.queryParameters;
-      final String? billPhone = billQp['phone'];
-      final String? billText = billQp['text'];
+    if (ncupScheme == 'whatsapp') {
+      final Map<String, String> ncupQp = uri.queryParameters;
+      final String? ncupPhone = ncupQp['phone'];
+      final String? ncupText = ncupQp['text'];
 
-      if (billPhone != null && billPhone.isNotEmpty) {
+      if (ncupPhone != null && ncupPhone.isNotEmpty) {
         return Uri.https(
           'wa.me',
-          '/${_billDigitsOnly(billPhone)}',
+          '/${NcupDigitsOnly(ncupPhone)}',
           <String, String>{
-            if (billText != null && billText.isNotEmpty)
-              'text': billText,
+            if (ncupText != null && ncupText.isNotEmpty) 'text': ncupText,
           },
         );
       }
@@ -1084,150 +1766,111 @@ class _BillHarborState extends State<BillHarbor> with WidgetsBindingObserver {
         'wa.me',
         '/',
         <String, String>{
-          if (billText != null && billText.isNotEmpty)
-            'text': billText,
+          if (ncupText != null && ncupText.isNotEmpty) 'text': ncupText,
         },
       );
     }
 
-    if ((billScheme == 'http' || billScheme == 'https') &&
-        (billUri.host.toLowerCase().endsWith('wa.me') ||
-            billUri.host.toLowerCase().endsWith('whatsapp.com'))) {
-      return billUri;
+    if ((ncupScheme == 'http' || ncupScheme == 'https') &&
+        (uri.host.toLowerCase().endsWith('wa.me') ||
+            uri.host.toLowerCase().endsWith('whatsapp.com'))) {
+      return uri;
     }
 
-    if (billScheme == 'skype') {
-      return billUri;
+    if (ncupScheme == 'skype') {
+      return uri;
     }
 
-    if (billScheme == 'fb-messenger') {
-      final String billPath = billUri.pathSegments.isNotEmpty
-          ? billUri.pathSegments.join('/')
-          : '';
-      final Map<String, String> billQp = billUri.queryParameters;
+    if (ncupScheme == 'fb-messenger') {
+      final String ncupPath =
+      uri.pathSegments.isNotEmpty ? uri.pathSegments.join('/') : '';
+      final Map<String, String> ncupQp = uri.queryParameters;
 
-      final String billId =
-          billQp['id'] ?? billQp['user'] ?? billPath;
+      final String ncupId = ncupQp['id'] ?? ncupQp['user'] ?? ncupPath;
 
-      if (billId.isNotEmpty) {
+      if (ncupId.isNotEmpty) {
         return Uri.https(
           'm.me',
-          '/$billId',
-          billUri.queryParameters.isEmpty
-              ? null
-              : billUri.queryParameters,
+          '/$ncupId',
+          uri.queryParameters.isEmpty ? null : uri.queryParameters,
         );
       }
 
       return Uri.https(
         'm.me',
         '/',
-        billUri.queryParameters.isEmpty
-            ? null
-            : billUri.queryParameters,
+        uri.queryParameters.isEmpty ? null : uri.queryParameters,
       );
     }
 
-    if (billScheme == 'sgnl') {
-      final Map<String, String> billQp = billUri.queryParameters;
-      final String? billPhone = billQp['phone'];
-      final String? billUsername = billQp['username'];
+    if (ncupScheme == 'sgnl') {
+      final Map<String, String> ncupQp = uri.queryParameters;
+      final String? ncupPhone = ncupQp['phone'];
+      final String? ncupUsername = ncupQp['username'];
 
-      if (billPhone != null && billPhone.isNotEmpty) {
+      if (ncupPhone != null && ncupPhone.isNotEmpty) {
         return Uri.https(
           'signal.me',
-          '/#p/${_billDigitsOnly(billPhone)}',
+          '/#p/${NcupDigitsOnly(ncupPhone)}',
         );
       }
 
-      if (billUsername != null && billUsername.isNotEmpty) {
+      if (ncupUsername != null && ncupUsername.isNotEmpty) {
         return Uri.https(
           'signal.me',
-          '/#u/$billUsername',
+          '/#u/$ncupUsername',
         );
       }
 
-      final String billPath = billUri.pathSegments.join('/');
-      if (billPath.isNotEmpty) {
+      final String ncupPath = uri.pathSegments.join('/');
+      if (ncupPath.isNotEmpty) {
         return Uri.https(
           'signal.me',
-          '/$billPath',
-          billUri.queryParameters.isEmpty
-              ? null
-              : billUri.queryParameters,
+          '/$ncupPath',
+          uri.queryParameters.isEmpty ? null : uri.queryParameters,
         );
       }
 
-      return billUri;
+      return uri;
     }
 
-    if (billScheme == 'tel') {
-      return Uri.parse('tel:${_billDigitsOnly(billUri.path)}');
+    if (ncupScheme == 'tel') {
+      return Uri.parse('tel:${NcupDigitsOnly(uri.path)}');
     }
 
-    if (billScheme == 'mailto') {
-      return billUri;
+    if (ncupScheme == 'mailto') {
+      return uri;
     }
 
-    if (billScheme == 'bnl') {
-      final String billNewPath =
-      billUri.path.isNotEmpty ? billUri.path : '';
+    if (ncupScheme == 'bnl') {
+      final String ncupNewPath = uri.path.isNotEmpty ? uri.path : '';
       return Uri.https(
         'bnl.com',
-        '/$billNewPath',
-        billUri.queryParameters.isEmpty
-            ? null
-            : billUri.queryParameters,
+        '/$ncupNewPath',
+        uri.queryParameters.isEmpty ? null : uri.queryParameters,
       );
     }
 
-    return billUri;
+    return uri;
   }
 
-  Future<bool> _openBillMailWeb(Uri billMailto) async {
-    final Uri billGmailUri = _billGmailize(billMailto);
-    return await _openBillWeb(billGmailUri);
-  }
-
-  Uri _billGmailize(Uri billMailUri) {
-    final Map<String, String> billQueryParams =
-        billMailUri.queryParameters;
-
-    final Map<String, String> billParams = <String, String>{
-      'view': 'cm',
-      'fs': '1',
-      if (billMailUri.path.isNotEmpty) 'to': billMailUri.path,
-      if ((billQueryParams['subject'] ?? '').isNotEmpty)
-        'su': billQueryParams['subject']!,
-      if ((billQueryParams['body'] ?? '').isNotEmpty)
-        'body': billQueryParams['body']!,
-      if ((billQueryParams['cc'] ?? '').isNotEmpty)
-        'cc': billQueryParams['cc']!,
-      if ((billQueryParams['bcc'] ?? '').isNotEmpty)
-        'bcc': billQueryParams['bcc']!,
-    };
-
-    return Uri.https('mail.google.com', '/mail/', billParams);
-  }
-
-  Future<bool> _openBillWeb(Uri billUri) async {
+  Future<bool> NcupOpenWeb(Uri uri) async {
     try {
       if (await launchUrl(
-        billUri,
+        uri,
         mode: LaunchMode.inAppBrowserView,
       )) {
         return true;
       }
 
       return await launchUrl(
-        billUri,
+        uri,
         mode: LaunchMode.externalApplication,
       );
-    } catch (billError) {
-      debugPrint('openInAppBrowser error: $billError; url=$billUri');
+    } catch (error) {
       try {
         return await launchUrl(
-          billUri,
+          uri,
           mode: LaunchMode.externalApplication,
         );
       } catch (_) {
@@ -1236,34 +1879,272 @@ class _BillHarborState extends State<BillHarbor> with WidgetsBindingObserver {
     }
   }
 
-  Future<bool> _openBillExternal(Uri billUri) async {
+  Future<bool> NcupOpenExternal(Uri uri) async {
     try {
       return await launchUrl(
-        billUri,
+        uri,
         mode: LaunchMode.externalApplication,
       );
-    } catch (billError) {
-      debugPrint('openExternal error: $billError; url=$billUri');
+    } catch (error) {
       return false;
+    }
+  }
+
+  void NcupHandleServerSavedata(String savedata) {
+    print('onServerResponse savedata: $savedata');
+  }
+
+  Color _parseHexColor(String hex) {
+    String value = hex.trim();
+    if (value.startsWith('#')) value = value.substring(1);
+    if (value.length == 6) {
+      value = 'FF$value';
+    }
+    final intColor = int.tryParse(value, radix: 16) ?? 0xFF000000;
+    return Color(intColor);
+  }
+
+  /// Обновить localStorage('app_data') по актуальному NcupDeviceProfileInstance
+  Future<void> _updateAppDataInLocalStorageFromProfile() async {
+    if (NcupWebViewController == null) return;
+
+    final String? token = _resolveTokenForShip();
+    final Map<String, dynamic> map =
+    NcupDeviceProfileInstance.NcupToMap(fcmToken: token);
+
+    NcupLoggerService()
+        .NcupLogInfo('updateAppDataFromProfile: ${jsonEncode(map)}');
+
+    try {
+      await NcupWebViewController!.evaluateJavascript(
+        source:
+        "localStorage.setItem('app_data', JSON.stringify(${jsonEncode(map)}));",
+      );
+    } catch (e, st) {
+      NcupLoggerService().NcupLogError(
+          'updateAppDataInLocalStorageFromProfile error: $e\n$st');
+    }
+  }
+
+  // НОВОЕ: парсинг buttonswl и savels
+  void _updateExtraDataFromServerPayload(Map<dynamic, dynamic> root) {
+    try {
+      final dynamic adataRaw = root['adata'];
+      if (adataRaw is Map) {
+        final Map adata = adataRaw;
+
+        // buttonswl
+        final dynamic buttonswlRaw = adata['buttonswl'];
+        if (buttonswlRaw is List) {
+          final List<String> list = buttonswlRaw
+              .where((e) => e != null)
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toList();
+          setState(() {
+            _buttonWhitelist = list;
+          });
+          NcupLoggerService()
+              .NcupLogInfo('buttonswl updated: $_buttonWhitelist');
+          _updateBackButtonVisibility();
+        }
+
+        // savels -> сохраняем в профиль и перезаписываем app_data через NcupToMap
+        final dynamic savelsRaw = adata['savels'];
+        if (savelsRaw is Map) {
+          NcupDeviceProfileInstance.NcupSavels =
+          Map<String, dynamic>.from(savelsRaw);
+          NcupLoggerService().NcupLogInfo(
+              'savels stored in profile: ${NcupDeviceProfileInstance.NcupSavels}');
+          _updateAppDataInLocalStorageFromProfile();
+        }
+      }
+    } catch (e, st) {
+      NcupLoggerService()
+          .NcupLogError('Error in _updateExtraDataFromServerPayload: $e\n$st');
+    }
+  }
+
+  void _updateSafeAreaFromServerPayload(Map<dynamic, dynamic> root) {
+    NcupLoggerService()
+        .NcupLogInfo('SAFEAREA RAW PAYLOAD: ${jsonEncode(root)}');
+
+    bool? safearea;
+    String? bgLightHex;
+    String? bgDarkHex;
+
+    final dynamic content = root['content'];
+    if (content is Map) {
+      if (content['safearea'] != null) {
+        final dynamic raw = content['safearea'];
+        if (raw is bool) {
+          safearea = raw;
+        } else if (raw is String) {
+          final String v = raw.toLowerCase().trim();
+          if (v == 'true' || v == '1' || v == 'yes') safearea = true;
+          if (v == 'false' || v == '0' || v == 'no') safearea = false;
+        } else if (raw is num) {
+          safearea = raw != 0;
+        }
+      }
+
+      if (content['safearea_color'] != null &&
+          content['safearea_color'].toString().trim().isNotEmpty) {
+        bgLightHex = content['safearea_color'].toString().trim();
+        bgDarkHex = bgLightHex;
+      }
+    }
+
+    final dynamic adata = root['adata'];
+    if (adata is Map) {
+      if (safearea == null && adata['safearea'] != null) {
+        final dynamic raw = adata['safearea'];
+        if (raw is bool) {
+          safearea = raw;
+        } else if (raw is String) {
+          final String v = raw.toLowerCase().trim();
+          if (v == 'true' || v == '1' || v == 'yes') safearea = true;
+          if (v == 'false' || v == '0' || v == 'no') safearea = false;
+        } else if (raw is num) {
+          safearea = raw != 0;
+        }
+      }
+
+      if (adata['bgsareaw'] != null &&
+          adata['bgsareaw'].toString().trim().isNotEmpty) {
+        bgLightHex = adata['bgsareaw'].toString().trim();
+      }
+      if (adata['bgsareab'] != null &&
+          adata['bgsareab'].toString().trim().isNotEmpty) {
+        bgDarkHex = adata['bgsareab'].toString().trim();
+      }
+    }
+
+    if (safearea == null && root['safearea'] != null) {
+      final dynamic raw = root['safearea'];
+      if (raw is bool) {
+        safearea = raw;
+      } else if (raw is String) {
+        final String v = raw.toLowerCase().trim();
+        if (v == 'true' || v == '1' || v == 'yes') safearea = true;
+        if (v == 'false' || v == '0' || v == 'no') safearea = false;
+      } else if (raw is num) {
+        safearea = raw != 0;
+      }
+    }
+
+    NcupLoggerService().NcupLogInfo(
+        'SAFEAREA PARSED: enabled=$safearea, light=$bgLightHex, dark=$bgDarkHex');
+
+    if (safearea == null) {
+      return;
+    }
+
+    final Brightness platformBrightness =
+        WidgetsBinding.instance.platformDispatcher.platformBrightness;
+
+    String? chosenHex;
+    if (platformBrightness == Brightness.light) {
+      chosenHex = bgLightHex ?? bgDarkHex;
+    } else {
+      chosenHex = bgDarkHex ?? bgLightHex;
+    }
+
+    final bool enabled = safearea;
+    Color background =
+    enabled ? const Color(0xFF1A1A22) : const Color(0xFF000000);
+
+    if (enabled && chosenHex != null && chosenHex.isNotEmpty) {
+      background = _parseHexColor(chosenHex);
+    }
+
+    setState(() {
+      _safeAreaEnabled = enabled;
+      _safeAreaBackgroundColor = background;
+      NcupDeviceProfileInstance.NcupSafeAreaEnabled = enabled;
+      NcupDeviceProfileInstance.NcupSafeAreaColor =
+      enabled ? (chosenHex ?? '#1A1A22') : '';
+    });
+
+    NcupLoggerService().NcupLogInfo(
+        'SAFEAREA STATE UPDATED: enabled=$_safeAreaEnabled, color=$_safeAreaBackgroundColor (brightness=$platformBrightness)');
+  }
+
+  // логика показа/скрытия кнопки назад
+
+  bool _matchesButtonWhitelist(String url) {
+    if (url.isEmpty) return false;
+    Uri? uri;
+    try {
+      uri = Uri.parse(url);
+    } catch (_) {
+      return false;
+    }
+
+    final String host = uri.host.toLowerCase();
+    final String full = uri.toString();
+
+    for (final String item in _buttonWhitelist) {
+      final String trimmed = item.trim();
+      if (trimmed.isEmpty) continue;
+
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        if (full.startsWith(trimmed)) return true;
+      } else {
+        final String domain = trimmed.toLowerCase();
+        if (host == domain || host.endsWith('.$domain')) return true;
+      }
+    }
+
+    return false;
+  }
+
+  Future<void> _updateBackButtonVisibility() async {
+    final String current = _currentUrl ?? NcupCurrentUrl;
+    final bool shouldShow = _matchesButtonWhitelist(current);
+    if (shouldShow != _showBackButton) {
+      setState(() {
+        _showBackButton = shouldShow;
+      });
+    }
+  }
+
+  Future<void> _handleBackButtonPressed() async {
+    if (NcupWebViewController == null) return;
+    try {
+      if (await NcupWebViewController!.canGoBack()) {
+        await NcupWebViewController!.goBack();
+      } else {
+        await NcupWebViewController!.loadUrl(
+          urlRequest: URLRequest(url: WebUri(NcupHomeUrl)),
+        );
+      }
+    } catch (e, st) {
+      NcupLoggerService()
+          .NcupLogError('Error on back button pressed: $e\n$st');
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    _bindBillNotificationTap(); // повторная привязка
+    NcupBindNotificationTap();
 
-    Widget billContent = Stack(
+    final Color bgColor =
+    _safeAreaEnabled ? _safeAreaBackgroundColor : Colors.black;
+
+    final Widget webView = Stack(
       children: <Widget>[
-        if (billCoverVisible)
+        if (NcupCoverVisible)
+        // Заменён стартовый индикатор на кастомный XO-лоадер
           const BillXOLoader()
         else
           Container(
-            color: Colors.black,
+            color: bgColor,
             child: Stack(
               children: <Widget>[
                 InAppWebView(
-                  key: ValueKey<int>(billHatchCounter),
-                  initialSettings:  InAppWebViewSettings(
+                  key: ValueKey<int>(NcupWebViewKeyCounter),
+                  initialSettings: InAppWebViewSettings(
                     javaScriptEnabled: true,
                     disableDefaultErrorPage: true,
                     mediaPlaybackRequiresUserGesture: false,
@@ -1276,286 +2157,445 @@ class _BillHarborState extends State<BillHarbor> with WidgetsBindingObserver {
                     transparentBackground: true,
                   ),
                   initialUrlRequest: URLRequest(
-                    url: WebUri(billHomeUrl),
+                    url: WebUri(NcupHomeUrl),
                   ),
                   onWebViewCreated:
-                      (InAppWebViewController billController) {
-                    billWebViewController = billController;
+                      (InAppWebViewController controller) async {
+                    NcupWebViewController = controller;
+                    _currentUrl = NcupHomeUrl;
 
-                    billBosun ??= BillBosun(
-                      billDeviceDeck: billDeviceDeck,
-                      billSpy: billSpy,
+                    NcupBosunInstance ??= NcupBosunViewModel(
+                      NcupDeviceProfileInstance: NcupDeviceProfileInstance,
+                      NcupAnalyticsSpyInstance: NcupAnalyticsSpyInstance,
                     );
 
-                    billCourier ??= BillCourier(
-                      billBosun: billBosun!,
-                      getBillWebView: () => billWebViewController,
+                    NcupCourier ??= NcupCourierService(
+                      NcupBosun: NcupBosunInstance!,
+                      NcupGetWebViewController: () => NcupWebViewController,
                     );
 
-                    billWebViewController.addJavaScriptHandler(
+                    try {
+                      final ua = await controller.evaluateJavascript(
+                        source: "navigator.userAgent",
+                      );
+                      if (ua is String && ua.trim().isNotEmpty) {
+                        _baseUserAgent = ua.trim();
+                        _currentUserAgent = _baseUserAgent!;
+                        NcupDeviceProfileInstance.NcupBaseUserAgent =
+                            _baseUserAgent;
+                        NcupLoggerService().NcupLogInfo(
+                            'Initial WebView User-Agent: $_baseUserAgent');
+                        print(
+                            '[UA] INITIAL WEBVIEW USER AGENT: $_baseUserAgent');
+                      }
+                    } catch (e) {
+                      NcupLoggerService().NcupLogWarn(
+                          'Failed to read navigator.userAgent on create: $e');
+                    }
+
+                    await _applyNormalUserAgentIfNeeded();
+
+                    controller.addJavaScriptHandler(
                       handlerName: 'onServerResponse',
-                      callback: (List<dynamic> billArgs) {
+                      callback: (List<dynamic> args) async {
+                        if (args.isEmpty) return null;
+
+                        print("Get Data server $args");
+
                         try {
-                          if (billArgs.isNotEmpty &&
-                              billArgs[0] is Map) {
-                            final dynamic billRaw =
-                            billArgs[0]['savedata'];
-                            final String billSavedata =
-                                billRaw?.toString() ?? '';
+                          dynamic first = args[0];
 
-                            print("Server response: $billSavedata");
+                          if (first is List && first.isNotEmpty) {
+                            first = first.first;
+                          }
 
-                            // savedata == "false" → ВКЛЮЧИТЬ SafeArea
-                            // savedata == "true"  → ВЫКЛЮЧИТЬ SafeArea
-                            if (billSavedata == "false") {
-                              setState(() {
-                                billUseSafeArea = true;
-                              });
-                            } else if (billSavedata == "true") {
-                              setState(() {
-                                billUseSafeArea = false;
-                              });
+                          if (first is Map) {
+                            final Map<dynamic, dynamic> root = first;
+
+                            if (root['savedata'] != null) {
+                              NcupHandleServerSavedata(
+                                  root['savedata'].toString());
+                            }
+
+                            _updateExtraDataFromServerPayload(root);
+                            _updateSafeAreaFromServerPayload(root);
+                            await _updateUserAgentFromServerPayload(root);
+
+                            await _applyNormalUserAgentIfNeeded();
+
+                            try {
+                              if (!_loadedJsExecutedOnce) {
+                                final dynamic adataRaw = root['adata'];
+                                if (adataRaw is Map) {
+                                  final Map adata = adataRaw;
+                                  final dynamic loadedJsRaw =
+                                  adata['loadedjs'];
+                                  if (loadedJsRaw != null) {
+                                    final String loadedJs =
+                                    loadedJsRaw.toString().trim();
+                                    if (loadedJs.isNotEmpty) {
+                                      _pendingLoadedJs = loadedJs;
+                                      NcupLoggerService().NcupLogInfo(
+                                        'loadedjs received, will execute ONCE after 6 seconds',
+                                      );
+
+                                      Future<void>.delayed(
+                                        const Duration(seconds: 6),
+                                            () async {
+                                          if (!mounted) return;
+                                          if (_loadedJsExecutedOnce) {
+                                            NcupLoggerService().NcupLogInfo(
+                                                'Skipping loadedjs: already executed once');
+                                            return;
+                                          }
+                                          if (NcupWebViewController == null) {
+                                            NcupLoggerService().NcupLogWarn(
+                                                'Skipping loadedjs execution: controller is null');
+                                            return;
+                                          }
+                                          final String? jsToRun =
+                                              _pendingLoadedJs;
+                                          if (jsToRun == null ||
+                                              jsToRun.isEmpty) {
+                                            return;
+                                          }
+                                          NcupLoggerService().NcupLogInfo(
+                                              'Executing loadedjs from server payload (ONCE, delayed 6s)');
+                                          try {
+                                            await NcupWebViewController
+                                                ?.evaluateJavascript(
+                                              source: jsToRun,
+                                            );
+                                            _loadedJsExecutedOnce = true;
+                                          } catch (e, st) {
+                                            NcupLoggerService().NcupLogError(
+                                                'Error executing delayed loadedjs: $e\n$st');
+                                          }
+                                        },
+                                      );
+                                    }
+                                  }
+                                }
+                              } else {
+                                NcupLoggerService().NcupLogInfo(
+                                    'loadedjs ignored: already executed once earlier');
+                              }
+                            } catch (e, st) {
+                              NcupLoggerService().NcupLogError(
+                                  'Error scheduling loadedjs: $e\n$st');
                             }
                           }
-                        } catch (_) {}
-
-                        if (billArgs.isEmpty) {
-                          return null;
+                        } catch (e, st) {
+                          print('onServerResponse error: $e\n$st');
                         }
 
-                        try {
-                          return billArgs.reduce(
-                                (dynamic current, dynamic next) =>
-                            current + next,
-                          );
-                        } catch (_) {
-                          return billArgs.first;
-                        }
+                        return null;
                       },
                     );
                   },
-                  onLoadStart: (InAppWebViewController billC,
-                      Uri? billUri) async {
+                  onPermissionRequest: (controller, request) async {
+                    // Очень важно: дать разрешение на video/audio, когда его запрашивает страница
+                    return PermissionResponse(
+                      resources: request.resources,
+                      action: PermissionResponseAction.GRANT,
+                    );
+                  },
+                  onLoadStart:
+                      (InAppWebViewController controller, Uri? uri) async {
                     setState(() {
-                      billStartLoadTimestamp =
+                      NcupStartLoadTimestamp =
                           DateTime.now().millisecondsSinceEpoch;
                     });
 
-                    final Uri? billViewUri = billUri;
-                    if (billViewUri != null) {
-                      if (_isBillBareEmail(billViewUri)) {
+                    final Uri? ncupViewUri = uri;
+                    if (ncupViewUri != null) {
+                      _currentUrl = ncupViewUri.toString();
+
+                      if (_isGoogleUrl(ncupViewUri)) {
+                        await _addRandomToUserAgentForGoogle();
+                      } else {
+                        await _restoreUserAgentAfterGoogleIfNeeded();
+                        await _applyNormalUserAgentIfNeeded();
+                      }
+
+                      await _updateBackButtonVisibility();
+
+                      if (NcupIsBareEmail(ncupViewUri)) {
                         try {
-                          await billC.stopLoading();
+                          await controller.stopLoading();
                         } catch (_) {}
-                        final Uri billMailto =
-                        _toBillMailto(billViewUri);
-                        await _openBillMailWeb(billMailto);
+                        final Uri ncupMailto = NcupToMailto(ncupViewUri);
+                        await NcupOpenMailExternal(ncupMailto);
                         return;
                       }
 
-                      final String billScheme =
-                      billViewUri.scheme.toLowerCase();
-                      if (billScheme != 'http' &&
-                          billScheme != 'https') {
+                      final String ncupScheme =
+                      ncupViewUri.scheme.toLowerCase();
+
+                      if (ncupScheme == 'mailto') {
                         try {
-                          await billC.stopLoading();
+                          await controller.stopLoading();
+                        } catch (_) {}
+                        await NcupOpenMailExternal(ncupViewUri);
+                        return;
+                      }
+
+                      if (NcupIsBankScheme(ncupViewUri)) {
+                        try {
+                          await controller.stopLoading();
+                        } catch (_) {}
+                        await NcupOpenBank(ncupViewUri);
+                        return;
+                      }
+
+                      if (ncupScheme != 'http' && ncupScheme != 'https') {
+                        try {
+                          await controller.stopLoading();
                         } catch (_) {}
                       }
                     }
                   },
                   onLoadError: (
-                      InAppWebViewController billController,
-                      Uri? billUrl,
-                      int billCode,
-                      String billMessage,
+                      InAppWebViewController controller,
+                      Uri? uri,
+                      int code,
+                      String message,
                       ) async {
-                    final int billNow =
+                    final int ncupNow =
                         DateTime.now().millisecondsSinceEpoch;
-                    final String billEvent =
-                        'InAppWebViewError(code=$billCode, message=$billMessage)';
+                    final String ncupEvent =
+                        'InAppWebViewError(code=$code, message=$message)';
 
-                    await billPostStat(
-                      billEvent: billEvent,
-                      billTimeStart: billNow,
-                      billTimeFinish: billNow,
-                      billUrl: billUrl?.toString() ?? '',
-                      billAppSid: billSpy.billAfUid,
-                      billFirstPageLoadTs: billFirstPageTimestamp,
+                    await NcupPostStat(
+                      event: ncupEvent,
+                      timeStart: ncupNow,
+                      timeFinish: ncupNow,
+                      url: uri?.toString() ?? '',
+                      appSid: NcupAnalyticsSpyInstance.NcupAppsFlyerUid,
+                      firstPageLoadTs: NcupFirstPageTimestamp,
                     );
                   },
                   onReceivedError: (
-                      InAppWebViewController billController,
-                      WebResourceRequest billRequest,
-                      WebResourceError billError,
+                      InAppWebViewController controller,
+                      WebResourceRequest request,
+                      WebResourceError error,
                       ) async {
-                    final int billNow =
+                    final int ncupNow =
                         DateTime.now().millisecondsSinceEpoch;
-                    final String billDescription =
-                    (billError.description ?? '').toString();
-                    final String billEvent =
-                        'WebResourceError(code=$billError, message=$billDescription)';
+                    final String ncupDescription =
+                    (error.description ?? '').toString();
+                    final String ncupEvent =
+                        'WebResourceError(code=$error, message=$ncupDescription)';
 
-                    await billPostStat(
-                      billEvent: billEvent,
-                      billTimeStart: billNow,
-                      billTimeFinish: billNow,
-                      billUrl: billRequest.url?.toString() ?? '',
-                      billAppSid: billSpy.billAfUid,
-                      billFirstPageLoadTs: billFirstPageTimestamp,
+                    await NcupPostStat(
+                      event: ncupEvent,
+                      timeStart: ncupNow,
+                      timeFinish: ncupNow,
+                      url: request.url?.toString() ?? '',
+                      appSid: NcupAnalyticsSpyInstance.NcupAppsFlyerUid,
+                      firstPageLoadTs: NcupFirstPageTimestamp,
                     );
                   },
-                  onLoadStop: (InAppWebViewController billC,
-                      Uri? billUri) async {
-                    await billC.evaluateJavascript(
-                      source: 'console.log(\'NeonCinema harbor up!\');',
-                    );
-
-                    await _pushBillDevice();
-                    await _pushBillAfData();
-
+                  onLoadStop:
+                      (InAppWebViewController controller, Uri? uri) async {
                     setState(() {
-                      billCurrentUrl = billUri.toString();
+                      NcupCurrentUrl = uri.toString();
+                      _currentUrl = NcupCurrentUrl;
                     });
+
+                    if (uri != null && !_isGoogleUrl(uri)) {
+                      await _restoreUserAgentAfterGoogleIfNeeded();
+                      await _applyNormalUserAgentIfNeeded();
+                    }
+
+                    await debugPrintCurrentUserAgent();
+
+                    await _sendAllDataToPageTwice();
+                    await _updateBackButtonVisibility();
 
                     Future<void>.delayed(
                       const Duration(seconds: 20),
                           () {
-                        sendBillLoadedOnce(
-                          billUrl: billCurrentUrl.toString(),
-                          billTimestart: billStartLoadTimestamp,
+                        NcupSendLoadedOnce(
+                          url: NcupCurrentUrl.toString(),
+                          timestart: NcupStartLoadTimestamp,
                         );
                       },
                     );
                   },
-                  shouldOverrideUrlLoading: (
-                      InAppWebViewController billC,
-                      NavigationAction billAction,
-                      ) async {
-                    final Uri? billUri = billAction.request.url;
-                    if (billUri == null) {
+                  shouldOverrideUrlLoading:
+                      (InAppWebViewController controller,
+                      NavigationAction action) async {
+                    final Uri? ncupUri = action.request.url;
+                    if (ncupUri == null) {
                       return NavigationActionPolicy.ALLOW;
                     }
 
-                    if (_isBillBareEmail(billUri)) {
-                      final Uri billMailto =
-                      _toBillMailto(billUri);
-                      await _openBillMailWeb(billMailto);
+                    _currentUrl = ncupUri.toString();
+                    await _updateBackButtonVisibility();
+
+                    if (_isGoogleUrl(ncupUri)) {
+                      await _addRandomToUserAgentForGoogle();
+                    } else {
+                      await _restoreUserAgentAfterGoogleIfNeeded();
+                      await _applyNormalUserAgentIfNeeded();
+                    }
+
+                    if (NcupIsBareEmail(ncupUri)) {
+                      final Uri ncupMailto = NcupToMailto(ncupUri);
+                      await NcupOpenMailExternal(ncupMailto);
                       return NavigationActionPolicy.CANCEL;
                     }
 
-                    final String billScheme =
-                    billUri.scheme.toLowerCase();
+                    final String ncupScheme = ncupUri.scheme.toLowerCase();
 
-                    if (billScheme == 'mailto') {
-                      await _openBillMailWeb(billUri);
+                    if (ncupScheme == 'mailto') {
+                      await NcupOpenMailExternal(ncupUri);
                       return NavigationActionPolicy.CANCEL;
                     }
 
-                    if (billScheme == 'tel') {
+                    if (NcupIsBankScheme(ncupUri)) {
+                      await NcupOpenBank(ncupUri);
+                      return NavigationActionPolicy.CANCEL;
+                    }
+
+                    if ((ncupScheme == 'http' || ncupScheme == 'https') &&
+                        NcupIsBankDomain(ncupUri)) {
+                      await NcupOpenBank(ncupUri);
+
+                      if (_isAdobeRedirect(ncupUri)) {
+                        if (context.mounted) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  AdobeRedirectScreen(uri: ncupUri),
+                            ),
+                          );
+                        }
+                        return NavigationActionPolicy.CANCEL;
+                      }
+                      return NavigationActionPolicy.CANCEL;
+                    }
+
+                    if (ncupScheme == 'tel') {
                       await launchUrl(
-                        billUri,
+                        ncupUri,
                         mode: LaunchMode.externalApplication,
                       );
                       return NavigationActionPolicy.CANCEL;
                     }
 
-                    final String billHost =
-                    billUri.host.toLowerCase();
-                    final bool billIsSocial =
-                        billHost.endsWith('facebook.com') ||
-                            billHost.endsWith('instagram.com') ||
-                            billHost.endsWith('twitter.com') ||
-                            billHost.endsWith('x.com');
+                    final String host = ncupUri.host.toLowerCase();
+                    final bool ncupIsSocial =
+                        host.endsWith('facebook.com') ||
+                            host.endsWith('instagram.com') ||
+                            host.endsWith('twitter.com') ||
+                            host.endsWith('x.com');
 
-                    if (billIsSocial) {
-                      await _openBillExternal(billUri);
+                    if (ncupIsSocial) {
+                      await NcupOpenExternal(ncupUri);
                       return NavigationActionPolicy.CANCEL;
                     }
 
-                    if (_isBillPlatformish(billUri)) {
-                      final Uri billWebUri = _billHttpize(billUri);
-                      await _openBillExternal(billWebUri);
+                    if (NcupIsPlatformLink(ncupUri)) {
+                      final Uri ncupWebUri =
+                      NcupHttpizePlatformUri(ncupUri);
+                      await NcupOpenExternal(ncupWebUri);
                       return NavigationActionPolicy.CANCEL;
                     }
 
-                    if (billScheme != 'http' &&
-                        billScheme != 'https') {
+                    if (ncupScheme != 'http' && ncupScheme != 'https') {
                       return NavigationActionPolicy.CANCEL;
                     }
 
                     return NavigationActionPolicy.ALLOW;
                   },
-                  onCreateWindow: (
-                      InAppWebViewController billC,
-                      CreateWindowAction billRequest,
-                      ) async {
-                    final Uri? billUri = billRequest.request.url;
-                    if (billUri == null) {
+                  onCreateWindow:
+                      (InAppWebViewController controller,
+                      CreateWindowAction request) async {
+                    final Uri? ncupUri = request.request.url;
+                    if (ncupUri == null) {
                       return false;
                     }
 
-                    if (_isBillBareEmail(billUri)) {
-                      final Uri billMailto =
-                      _toBillMailto(billUri);
-                      await _openBillMailWeb(billMailto);
+                    _currentUrl = ncupUri.toString();
+                    await _updateBackButtonVisibility();
+
+                    if (_isGoogleUrl(ncupUri)) {
+                      await _addRandomToUserAgentForGoogle();
+                    } else {
+                      await _restoreUserAgentAfterGoogleIfNeeded();
+                      await _applyNormalUserAgentIfNeeded();
+                    }
+
+                    if (NcupIsBankScheme(ncupUri) ||
+                        ((ncupUri.scheme == 'http' ||
+                            ncupUri.scheme == 'https') &&
+                            NcupIsBankDomain(ncupUri))) {
+                      await NcupOpenBank(ncupUri);
                       return false;
                     }
 
-                    final String billScheme =
-                    billUri.scheme.toLowerCase();
-
-                    if (billScheme == 'mailto') {
-                      await _openBillMailWeb(billUri);
+                    if (NcupIsBareEmail(ncupUri)) {
+                      final Uri ncupMailto = NcupToMailto(ncupUri);
+                      await NcupOpenMailExternal(ncupMailto);
                       return false;
                     }
 
-                    if (billScheme == 'tel') {
+                    final String ncupScheme = ncupUri.scheme.toLowerCase();
+
+                    if (ncupScheme == 'mailto') {
+                      await NcupOpenMailExternal(ncupUri);
+                      return false;
+                    }
+
+                    if (ncupScheme == 'tel') {
                       await launchUrl(
-                        billUri,
+                        ncupUri,
                         mode: LaunchMode.externalApplication,
                       );
                       return false;
                     }
 
-                    final String billHost =
-                    billUri.host.toLowerCase();
-                    final bool billIsSocial =
-                        billHost.endsWith('facebook.com') ||
-                            billHost.endsWith('instagram.com') ||
-                            billHost.endsWith('twitter.com') ||
-                            billHost.endsWith('x.com');
+                    final String host = ncupUri.host.toLowerCase();
+                    final bool ncupIsSocial =
+                        host.endsWith('facebook.com') ||
+                            host.endsWith('instagram.com') ||
+                            host.endsWith('twitter.com') ||
+                            host.endsWith('x.com');
 
-                    if (billIsSocial) {
-                      await _openBillExternal(billUri);
+                    if (ncupIsSocial) {
+                      await NcupOpenExternal(ncupUri);
                       return false;
                     }
 
-                    if (_isBillPlatformish(billUri)) {
-                      final Uri billWebUri = _billHttpize(billUri);
-                      await _openBillExternal(billWebUri);
+                    if (NcupIsPlatformLink(ncupUri)) {
+                      final Uri ncupWebUri =
+                      NcupHttpizePlatformUri(ncupUri);
+                      await NcupOpenExternal(ncupWebUri);
                       return false;
                     }
 
-                    if (billScheme == 'http' ||
-                        billScheme == 'https') {
-                      billC.loadUrl(
+                    if (ncupScheme == 'http' || ncupScheme == 'https') {
+                      controller.loadUrl(
                         urlRequest: URLRequest(
-                          url: WebUri(billUri.toString()),
+                          url: WebUri(ncupUri.toString()),
                         ),
                       );
                     }
 
                     return false;
                   },
-                  onDownloadStartRequest: (
-                      InAppWebViewController billC,
-                      DownloadStartRequest billReq,
-                      ) async {
-                    await _openBillExternal(billReq.url);
+                  onDownloadStartRequest:
+                      (InAppWebViewController controller,
+                      DownloadStartRequest req) async {
+                    await NcupOpenExternal(req.url);
                   },
                 ),
                 Visibility(
-                  visible: !billVeilVisible,
+                  visible: !NcupVeilVisible,
+                  // Замена overlay-индикатора на XO-лоадер
                   child: const BillXOLoader(),
                 ),
               ],
@@ -1564,72 +2604,90 @@ class _BillHarborState extends State<BillHarbor> with WidgetsBindingObserver {
       ],
     );
 
-    if (billUseSafeArea) {
-      billContent = SafeArea(child: billContent);
-    }
+    // Верхняя панель с кнопкой "Назад" под SafeArea
+    final Widget topBackBar = (_safeAreaEnabled && _showBackButton)
+        ? Container(
+      color: _safeAreaBackgroundColor,
+      padding: const EdgeInsets.only(left: 4, right: 4),
+      height: 48,
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            onPressed: _handleBackButtonPressed,
+          ),
+        ],
+      ),
+    )
+        : const SizedBox.shrink();
+
+    final Widget fullScreen = Column(
+      children: [
+        topBackBar,
+        Expanded(child: webView),
+      ],
+    );
+
+    final Widget body = _safeAreaEnabled
+        ? SafeArea(
+      child: fullScreen,
+    )
+        : fullScreen;
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: Scaffold(
-        backgroundColor: Colors.black,
-        body: billContent,
+        backgroundColor: bgColor,
+        body: SizedBox.expand(
+          child: ColoredBox(
+            color: bgColor,
+            child: body,
+          ),
+        ),
       ),
     );
   }
+
+  bool _isAdobeRedirect(Uri uri) {
+    final String host = uri.host.toLowerCase();
+    return host == 'c00.adobe.com';
+  }
 }
 
-// ============================================================================
-// Отдельный WebView для внешней ссылки (из уведомлений)
-// ============================================================================
+// ---------------------- Экран для c00.adobe.com ----------------------
 
-class BillExternalScreen extends StatefulWidget with WidgetsBindingObserver {
-  final String billLane;
+class AdobeRedirectScreen extends StatelessWidget {
+  final Uri uri;
 
-  const BillExternalScreen(this.billLane, {super.key});
-
-  @override
-  State<BillExternalScreen> createState() => _BillExternalScreenState();
-}
-
-class _BillExternalScreenState extends State<BillExternalScreen>
-    with WidgetsBindingObserver {
-  late InAppWebViewController billExternalWebView;
+  const AdobeRedirectScreen({super.key, required this.uri});
 
   @override
   Widget build(BuildContext context) {
-    final bool billIsDark =
-        MediaQuery.of(context).platformBrightness == Brightness.dark;
-
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: billIsDark
-          ? SystemUiOverlayStyle.dark
-          : SystemUiOverlayStyle.light,
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: InAppWebView(
-          initialSettings:  InAppWebViewSettings(
-            javaScriptEnabled: true,
-            disableDefaultErrorPage: true,
-            mediaPlaybackRequiresUserGesture: false,
-            allowsInlineMediaPlayback: true,
-            allowsPictureInPictureMediaPlayback: true,
-            useOnDownloadStart: true,
-            javaScriptCanOpenWindowsAutomatically: true,
-            useShouldOverrideUrlLoading: true,
-            supportMultipleWindows: true,
+    return const Scaffold(
+      backgroundColor: Color(0xFF111111),
+      body: Padding(
+        padding: EdgeInsets.all(20),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                "Go to the App Store and download the app.",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                ),
+              ),
+              SizedBox(height: 24),
+              SizedBox(height: 40),
+            ],
           ),
-          initialUrlRequest:
-          URLRequest(url: WebUri(widget.billLane)),
-          onWebViewCreated:
-              (InAppWebViewController billC) {
-            billExternalWebView = billC;
-          },
         ),
       ),
     );
   }
 }
-
 
 // ============================================================================
 // main()
@@ -1639,18 +2697,18 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Firebase.initializeApp();
-  FirebaseMessaging.onBackgroundMessage(billFcmBackgroundHandler);
+  FirebaseMessaging.onBackgroundMessage(NcupFcmBackgroundHandler);
 
   if (Platform.isAndroid) {
     await InAppWebViewController.setWebContentsDebuggingEnabled(true);
   }
 
-  tzData.initializeTimeZones();
+  tz_data.initializeTimeZones();
 
   runApp(
     const MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: BillHall(),
+      home: NcupHall(),
     ),
   );
 }

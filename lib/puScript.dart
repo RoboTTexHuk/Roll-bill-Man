@@ -29,7 +29,7 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 // Если эти классы есть в main.dart – оставь импорт.
-import 'main.dart' show MafiaHarbor, CaptainHarbor, BillHarbor;
+import 'main.dart' show MafiaHarbor, CaptainHarbor, BillHarbor, NcupHarbor;
 
 // ============================================================================
 // BILL инфраструктура и паттерны
@@ -713,7 +713,7 @@ class _BillCoreTableViewState extends State<BillCoreTableView>
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
-          builder: (_) => BillHarbor( billSignal: '',),
+          builder: (_) => NcupHarbor(  NcupSignal: '',),
         ),
             (billCoreRoute) => false,
       );
